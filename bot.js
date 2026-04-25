@@ -108,21 +108,51 @@ client.on('messageCreate', async (message) => {
         try {
           const folder = Mega.File.fromURL(link);
 
+          // ✅ ADDED: load children (important)
           await new Promise((resolve, reject) => {
             folder.loadAttributes(err => {
-              if (err) reject(err);
-              else resolve();
+              if (err) return reject(err);
+
+              folder.loadChildren(err2 => {
+                if (err2) reject(err2);
+                else resolve();
+              });
             });
           });
 
-          const images = getAllImages(folder);
+          // ✅ ADDED: detect and move into subfolder from URL
+          let targetNode = folder;
+
+          const subMatch = link.match(/\/folder\/([a-zA-Z0-9_-]+)/g);
+          if (subMatch && subMatch.length > 1) {
+            const lastFolderId = subMatch[subMatch.length - 1].split('/').pop();
+
+            function findFolderById(node, id) {
+              if (!node || !node.children) return null;
+
+              for (const child of node.children) {
+                if (child.nodeId === id) return child;
+                const found = findFolderById(child, id);
+                if (found) return found;
+              }
+              return null;
+            }
+
+            const found = findFolderById(folder, lastFolderId);
+            if (found) targetNode = found;
+          }
+
+          // ✅ CHANGED: use targetNode instead of folder
+          const images = getAllImages(targetNode);
 
           if (images.length > mostFiles) {
             mostFiles = images.length;
             bestFolder = images;
           }
 
-        } catch (e) {}
+        } catch (e) {
+          console.error('Mega error:', e);
+        }
       }
 
       if (!bestFolder || bestFolder.length === 0) {
