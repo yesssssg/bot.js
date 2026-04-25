@@ -1,4 +1,3 @@
-
 const { Client, GatewayIntentBits, PermissionsBitField, Collection } = require('discord.js');
 
 const client = new Client({
@@ -12,16 +11,13 @@ const client = new Client({
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-// Auto @everyone ping state: { channelId -> { interval, cooldownMs } }
 const everyonePingIntervals = new Map();
-
-// Auto user ping state: { channelId -> { interval, userId, cooldownMs } }
 const userPingIntervals = new Map();
+let botDisabled = false;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function parseCooldown(str) {
-  // Accepts formats like: 30s, 5m, 2h, 1d, or plain seconds
   const match = str.match(/^(\d+)(s|m|h|d)?$/i);
   if (!match) return null;
   const value = parseInt(match[1]);
@@ -41,11 +37,7 @@ function requireAdmin(message) {
   return message.member.permissions.has(PermissionsBitField.Flags.Administrator);
 }
 
-// ─── Command Prefix ───────────────────────────────────────────────────────────
-
 const PREFIX = '!';
-
-// ─── Message Handler ──────────────────────────────────────────────────────────
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
@@ -53,6 +45,17 @@ client.on('messageCreate', async (message) => {
 
   const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = args.shift().toLowerCase();
+
+  // ── !disable (toggle all commands) ──────────────────────────────────────
+  if (command === 'disable') {
+    if (!requireAdmin(message)) {
+      return message.reply('❌ You need Administrator permission to use this command.');
+    }
+    botDisabled = !botDisabled;
+    return message.reply(botDisabled ? '🔴 Bot commands **disabled**.' : '🟢 Bot commands **enabled**.');
+  }
+
+  if (botDisabled) return;
 
   // ── !autopingeveryone enable <cooldown> ──────────────────────────────────
   if (command === 'autopingeveryone') {
@@ -72,7 +75,6 @@ client.on('messageCreate', async (message) => {
         return message.reply('❌ Invalid cooldown. Use formats like `30s`, `5m`, `2h`, `1d`.');
       }
 
-      // Clear any existing interval for this channel
       if (everyonePingIntervals.has(message.channel.id)) {
         clearInterval(everyonePingIntervals.get(message.channel.id).interval);
       }
@@ -162,7 +164,6 @@ client.on('messageCreate', async (message) => {
   // ── !randommessages ──────────────────────────────────────────────────────
   if (command === 'randommessages') {
     try {
-      // Fetch up to 100 recent messages, filter out bots and commands
       let fetched = await message.channel.messages.fetch({ limit: 100 });
       let pool = fetched.filter(m =>
         !m.author.bot &&
@@ -174,7 +175,6 @@ client.on('messageCreate', async (message) => {
         return message.reply('❌ Not enough non-bot messages in this channel to pick 3 random ones (need at least 3).');
       }
 
-      // Pick 3 unique random messages
       const picked = [];
       while (picked.length < 3) {
         const idx = Math.floor(Math.random() * pool.length);
@@ -202,7 +202,6 @@ client.on('messageCreate', async (message) => {
       return message.reply('❌ I need the **Manage Messages** permission to delete messages.');
     }
 
-    // Parse args: !purge 50 --exclude @user1 @user2
     const excludeIndex = args.indexOf('--exclude');
     const countStr = args[0];
     const count = parseInt(countStr);
@@ -211,7 +210,6 @@ client.on('messageCreate', async (message) => {
       return message.reply('Usage: `!purge <1-100> [--exclude @user1 @user2 ...]`');
     }
 
-    // Collect excluded user IDs
     const excludedIds = new Set();
     if (excludeIndex !== -1) {
       const excludeMentions = args.slice(excludeIndex + 1);
@@ -222,13 +220,10 @@ client.on('messageCreate', async (message) => {
     }
 
     try {
-      // Delete the command message first
       await message.delete().catch(() => {});
 
-      // Fetch up to count+1 messages (extra buffer for filtering)
       let fetched = await message.channel.messages.fetch({ limit: 100 });
 
-      // Filter by excluded users and Discord's 14-day bulk-delete limit
       const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
       let toDelete = fetched
         .filter(m =>
@@ -256,11 +251,9 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// ─── Ready ────────────────────────────────────────────────────────────────────
-
 client.once('ready', () => {
   console.log(`✅ Bot is online as ${client.user.tag}`);
-  console.log('Commands: !autopingeveryone, !autopinguser, !randommessages, !purge');
+  console.log('Commands: !autopingeveryone, !autopinguser, !randommessages, !purge, !disable');
 });
 
 client.login(process.env.DISCORD_TOKEN);
