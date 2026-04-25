@@ -178,9 +178,15 @@ client.on('messageCreate', async (message) => {
     return message.reply('Usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
   }
 
-  // ── !randommessages ──────────────────────────────────────────────────────
+  // ── !randommessages [count] ──────────────────────────────────────────────
   if (command === 'randommessages') {
     try {
+      const requestedCount = args[0] ? parseInt(args[0]) : 3;
+
+      if (isNaN(requestedCount) || requestedCount < 1) {
+        return message.reply('Usage: `!randommessages` or `!randommessages <number>` (e.g. `!randommessages 5`)');
+      }
+
       let fetched = await message.channel.messages.fetch({ limit: 100 });
       let pool = fetched.filter(m =>
         !m.author.bot &&
@@ -188,12 +194,19 @@ client.on('messageCreate', async (message) => {
         m.content.trim().length > 0
       ).map(m => m);
 
-      if (pool.length < 3) {
-        return message.reply('❌ Not enough non-bot messages in this channel to pick 3 random ones (need at least 3).');
+      if (pool.length === 0) {
+        return message.reply('❌ No messages found in this channel to pick from.');
       }
 
+      // Cap at however many are available
+      const actualCount = Math.min(requestedCount, pool.length);
+      if (actualCount < requestedCount) {
+        await message.reply(`ℹ️ Only **${pool.length}** message${pool.length !== 1 ? 's' : ''} available — showing all of them.`);
+      }
+
+      // Pick unique random messages
       const picked = [];
-      while (picked.length < 3) {
+      while (picked.length < actualCount) {
         const idx = Math.floor(Math.random() * pool.length);
         picked.push(pool[idx]);
         pool.splice(idx, 1);
@@ -203,7 +216,7 @@ client.on('messageCreate', async (message) => {
         `**${i + 1}.** **${m.author.username}**: ${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`
       ).join('\n\n');
 
-      return message.reply(`🎲 **3 Random Messages:**\n\n${lines}`);
+      return message.reply(`🎲 **${actualCount} Random Message${actualCount !== 1 ? 's' : ''}:**\n\n${lines}`);
     } catch (e) {
       console.error(e);
       return message.reply('❌ Failed to fetch messages.');
