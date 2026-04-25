@@ -85,6 +85,22 @@ client.on('messageCreate', async (message) => {
         return message.reply('❌ No mega.nz links found in this channel.');
       }
 
+      function getAllImages(node, out = []) {
+        if (!node) return out;
+
+        if (node.children && node.children.length) {
+          for (const child of node.children) {
+            getAllImages(child, out);
+          }
+        } else {
+          if (node.name && /\.(png|jpg|jpeg|webp|gif)$/i.test(node.name)) {
+            out.push(node);
+          }
+        }
+
+        return out;
+      }
+
       let bestFolder = null;
       let mostFiles = 0;
 
@@ -99,15 +115,11 @@ client.on('messageCreate', async (message) => {
             });
           });
 
-          if (!folder.children) continue;
+          const images = getAllImages(folder);
 
-          const files = folder.children.filter(f =>
-            /\.(png|jpg|jpeg|webp|gif)$/i.test(f.name)
-          );
-
-          if (files.length > mostFiles) {
-            mostFiles = files.length;
-            bestFolder = files;
+          if (images.length > mostFiles) {
+            mostFiles = images.length;
+            bestFolder = images;
           }
 
         } catch (e) {}
@@ -124,10 +136,6 @@ client.on('messageCreate', async (message) => {
         bestFolder[mid],
         bestFolder[mid + 1]
       ].filter(Boolean);
-
-      if (!selected.length) {
-        return message.reply('❌ Could not determine middle images.');
-      }
 
       for (const file of selected) {
         const buffer = await new Promise((resolve, reject) => {
@@ -258,7 +266,7 @@ client.on('messageCreate', async (message) => {
       const cooldownStr = args[2];
 
       if (!userMention || !cooldownStr) {
-        return message.reply('Usage: `!autopinguser enable @user <cooldown>` (e.g. `!autopinguser enable @John 10s`)');
+        return message.reply('Usage: `!autopinguser enable @user <cooldown>`');
       }
 
       const userId = userMention.replace(/[<@!>]/g, '');
@@ -271,7 +279,7 @@ client.on('messageCreate', async (message) => {
 
       const cooldownMs = parseCooldown(cooldownStr);
       if (!cooldownMs) {
-        return message.reply('❌ Invalid cooldown. Use formats like `10s`, `5m`, `2h`.');
+        return message.reply('❌ Invalid cooldown.');
       }
 
       if (userPingIntervals.has(message.channel.id)) {
@@ -288,127 +296,25 @@ client.on('messageCreate', async (message) => {
       }, cooldownMs);
 
       userPingIntervals.set(message.channel.id, { interval, userId, cooldownMs });
-      return message.reply(`✅ Auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}** (ping deleted after 0.5s).`);
+      return message.reply(`✅ Auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}**.`);
     }
 
     if (sub === 'disable') {
       if (!userPingIntervals.has(message.channel.id)) {
-        return message.reply('ℹ️ Auto user ping is not active in this channel.');
+        return message.reply('ℹ️ Auto user ping is not active.');
       }
       clearInterval(userPingIntervals.get(message.channel.id).interval);
       userPingIntervals.delete(message.channel.id);
-      return message.reply('✅ Auto user ping **disabled** in this channel.');
-    }
-
-    return message.reply('Usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
-  }
-
-  // ── !randommessages [count] ──────────────────────────────────────────────
-  if (command === 'randommessages') {
-    try {
-      const requestedCount = args[0] ? parseInt(args[0]) : 3;
-
-      if (isNaN(requestedCount) || requestedCount < 1) {
-        return message.reply('Usage: `!randommessages` or `!randommessages <number>` (e.g. `!randommessages 5`)');
-      }
-
-      let fetched = await message.channel.messages.fetch({ limit: 100 });
-      let pool = fetched.filter(m =>
-        !m.author.bot &&
-        m.id !== message.id &&
-        m.content.trim().length > 0
-      ).map(m => m);
-
-      if (pool.length === 0) {
-        return message.reply('❌ No messages found in this channel to pick from.');
-      }
-
-      const actualCount = Math.min(requestedCount, pool.length);
-      if (actualCount < requestedCount) {
-        await message.reply(`ℹ️ Only **${pool.length}** message${pool.length !== 1 ? 's' : ''} available — showing all of them.`);
-      }
-
-      const picked = [];
-      while (picked.length < actualCount) {
-        const idx = Math.floor(Math.random() * pool.length);
-        picked.push(pool[idx]);
-        pool.splice(idx, 1);
-      }
-
-      const lines = picked.map((m, i) =>
-        `**${i + 1}.** **${m.author.username}**: ${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`
-      ).join('\n\n');
-
-      return message.reply(`🎲 **${actualCount} Random Message${actualCount !== 1 ? 's' : ''}:**\n\n${lines}`);
-    } catch (e) {
-      console.error(e);
-      return message.reply('❌ Failed to fetch messages.');
+      return message.reply('✅ Auto user ping disabled.');
     }
   }
 
-  // ── !purge <count> [--exclude @user1 @user2 ...] ─────────────────────────
-  if (command === 'purge') {
-    if (!requireAdmin(message)) {
-      return message.reply('❌ You need Administrator permission to use this command.');
-    }
-    if (!message.channel.permissionsFor(message.guild.members.me).has(PermissionsBitField.Flags.ManageMessages)) {
-      return message.reply('❌ I need the **Manage Messages** permission to delete messages.');
-    }
-
-    const excludeIndex = args.indexOf('--exclude');
-    const countStr = args[0];
-    const count = parseInt(countStr);
-
-    if (isNaN(count) || count < 1 || count > 100) {
-      return message.reply('Usage: `!purge <1-100> [--exclude @user1 @user2 ...]`');
-    }
-
-    const excludedIds = new Set();
-    if (excludeIndex !== -1) {
-      const excludeMentions = args.slice(excludeIndex + 1);
-      for (const mention of excludeMentions) {
-        const id = mention.replace(/[<@!>]/g, '');
-        if (id) excludedIds.add(id);
-      }
-    }
-
-    try {
-      await message.delete().catch(() => {});
-
-      let fetched = await message.channel.messages.fetch({ limit: 100 });
-
-      const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-      let toDelete = fetched
-        .filter(m =>
-          !excludedIds.has(m.author.id) &&
-          m.createdTimestamp > twoWeeksAgo
-        )
-        .map(m => m)
-        .slice(0, count);
-
-      if (toDelete.length === 0) {
-        return message.channel.send('ℹ️ No messages to delete (they may be older than 14 days or all from excluded users).');
-      }
-
-      await message.channel.bulkDelete(toDelete, true);
-
-      const excludeNote = excludedIds.size > 0
-        ? ` (excluded ${excludedIds.size} user${excludedIds.size > 1 ? 's' : ''})`
-        : '';
-      const reply = await message.channel.send(`🗑️ Deleted **${toDelete.length}** message${toDelete.length !== 1 ? 's' : ''}${excludeNote}.`);
-      setTimeout(() => reply.delete().catch(() => {}), 4000);
-    } catch (e) {
-      console.error(e);
-      message.channel.send('❌ Failed to delete messages. Make sure messages are not older than 14 days.').catch(() => {});
-    }
-  }
 });
 
 // ─── Ready ────────────────────────────────────────────────────────────────────
 
 client.once('ready', () => {
   console.log(`✅ Bot is online as ${client.user.tag}`);
-  console.log('Commands: !autopingeveryone, !autopinguser, !randommessages, !purge, !disable, !pingjoin, !middlemega');
 });
 
 client.login(process.env.DISCORD_TOKEN);
