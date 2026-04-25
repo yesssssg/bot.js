@@ -11,3 +11,7 @@
     "dotenv": "^17.4.2"
   }
 }
+"dependencies": {
+  "discord.js": "^14.0.0",
+  "megajs": "^1.1.3"
+}
