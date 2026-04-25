@@ -13,6 +13,8 @@ const client = new Client({
 
 const everyonePingIntervals = new Map();
 const userPingIntervals = new Map();
+// pingJoinChannels: { guildId -> channelId }
+const pingJoinChannels = new Map();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +39,22 @@ function requireAdmin(message) {
 }
 
 const PREFIX = '!';
+
+// ─── Join Ping Handler ────────────────────────────────────────────────────────
+
+client.on('guildMemberAdd', async (member) => {
+  const channelId = pingJoinChannels.get(member.guild.id);
+  if (!channelId) return;
+
+  try {
+    const channel = await member.guild.channels.fetch(channelId);
+    if (!channel) return;
+    const ping = await channel.send(`<@${member.id}>`);
+    ping.delete().catch(() => {});
+  } catch (e) {
+    console.error('Failed to send join ping:', e);
+  }
+});
 
 // ─── Message Handler ──────────────────────────────────────────────────────────
 
@@ -72,6 +90,30 @@ client.on('messageCreate', async (message) => {
     }
 
     return message.reply(`✅ Stopped **${stopped}** active auto-ping${stopped !== 1 ? 's' : ''}.`);
+  }
+
+  // ── !pingjoin enable / disable ───────────────────────────────────────────
+  if (command === 'pingjoin') {
+    if (!requireAdmin(message)) {
+      return message.reply('❌ You need Administrator permission to use this command.');
+    }
+
+    const sub = args[0]?.toLowerCase();
+
+    if (sub === 'enable') {
+      pingJoinChannels.set(message.guild.id, message.channel.id);
+      return message.reply(`✅ Join pings **enabled** — new members will be pinged in this channel (ping deleted immediately).`);
+    }
+
+    if (sub === 'disable') {
+      if (!pingJoinChannels.has(message.guild.id)) {
+        return message.reply('ℹ️ Join pings are not active.');
+      }
+      pingJoinChannels.delete(message.guild.id);
+      return message.reply('✅ Join pings **disabled**.');
+    }
+
+    return message.reply('Usage: `!pingjoin enable` or `!pingjoin disable`');
   }
 
   // ── !autopingeveryone enable <cooldown> ──────────────────────────────────
@@ -198,13 +240,11 @@ client.on('messageCreate', async (message) => {
         return message.reply('❌ No messages found in this channel to pick from.');
       }
 
-      // Cap at however many are available
       const actualCount = Math.min(requestedCount, pool.length);
       if (actualCount < requestedCount) {
         await message.reply(`ℹ️ Only **${pool.length}** message${pool.length !== 1 ? 's' : ''} available — showing all of them.`);
       }
 
-      // Pick unique random messages
       const picked = [];
       while (picked.length < actualCount) {
         const idx = Math.floor(Math.random() * pool.length);
@@ -285,7 +325,7 @@ client.on('messageCreate', async (message) => {
 
 client.once('ready', () => {
   console.log(`✅ Bot is online as ${client.user.tag}`);
-  console.log('Commands: !autopingeveryone, !autopinguser, !randommessages, !purge, !disable');
+  console.log('Commands: !autopingeveryone, !autopinguser, !randommessages, !purge, !disable, !pingjoin');
 });
 
 client.login(process.env.DISCORD_TOKEN);
