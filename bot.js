@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, PermissionsBitField, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
 
 const client = new Client({
   intents: [
@@ -13,7 +13,6 @@ const client = new Client({
 
 const everyonePingIntervals = new Map();
 const userPingIntervals = new Map();
-let botDisabled = false;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +38,8 @@ function requireAdmin(message) {
 
 const PREFIX = '!';
 
+// ─── Message Handler ──────────────────────────────────────────────────────────
+
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith(PREFIX)) return;
@@ -46,16 +47,32 @@ client.on('messageCreate', async (message) => {
   const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = args.shift().toLowerCase();
 
-  // ── !disable (toggle all commands) ──────────────────────────────────────
+  // ── !disable — stop all currently running auto-pings ────────────────────
   if (command === 'disable') {
     if (!requireAdmin(message)) {
       return message.reply('❌ You need Administrator permission to use this command.');
     }
-    botDisabled = !botDisabled;
-    return message.reply(botDisabled ? '🔴 Bot commands **disabled**.' : '🟢 Bot commands **enabled**.');
-  }
 
-  if (botDisabled) return;
+    let stopped = 0;
+
+    for (const [channelId, data] of everyonePingIntervals) {
+      clearInterval(data.interval);
+      everyonePingIntervals.delete(channelId);
+      stopped++;
+    }
+
+    for (const [channelId, data] of userPingIntervals) {
+      clearInterval(data.interval);
+      userPingIntervals.delete(channelId);
+      stopped++;
+    }
+
+    if (stopped === 0) {
+      return message.reply('ℹ️ No active auto-pings to stop.');
+    }
+
+    return message.reply(`✅ Stopped **${stopped}** active auto-ping${stopped !== 1 ? 's' : ''}.`);
+  }
 
   // ── !autopingeveryone enable <cooldown> ──────────────────────────────────
   if (command === 'autopingeveryone') {
@@ -250,6 +267,8 @@ client.on('messageCreate', async (message) => {
     }
   }
 });
+
+// ─── Ready ────────────────────────────────────────────────────────────────────
 
 client.once('ready', () => {
   console.log(`✅ Bot is online as ${client.user.tag}`);
