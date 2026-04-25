@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
+const Mega = require('megajs');
 
 const client = new Client({
   intents: [
@@ -64,6 +65,88 @@ client.on('messageCreate', async (message) => {
 
   const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = args.shift().toLowerCase();
+
+  // ── !middlemega ──────────────────────────────────────────────
+  if (command === 'middlemega') {
+    try {
+      await message.reply('🔍 Searching for mega.nz folders...');
+
+      const fetched = await message.channel.messages.fetch({ limit: 100 });
+
+      const megaLinks = [];
+      const regex = /https?:\/\/mega\.nz\/[^\s]+/gi;
+
+      fetched.forEach(msg => {
+        const matches = msg.content.match(regex);
+        if (matches) megaLinks.push(...matches);
+      });
+
+      if (!megaLinks.length) {
+        return message.reply('❌ No mega.nz links found in this channel.');
+      }
+
+      let bestFolder = null;
+      let mostFiles = 0;
+
+      for (const link of megaLinks) {
+        try {
+          const folder = Mega.File.fromURL(link);
+
+          await new Promise((resolve, reject) => {
+            folder.loadAttributes(err => {
+              if (err) reject(err);
+              else resolve();
+            });
+          });
+
+          if (!folder.children) continue;
+
+          const files = folder.children.filter(f =>
+            /\.(png|jpg|jpeg|webp|gif)$/i.test(f.name)
+          );
+
+          if (files.length > mostFiles) {
+            mostFiles = files.length;
+            bestFolder = files;
+          }
+
+        } catch (e) {}
+      }
+
+      if (!bestFolder || bestFolder.length === 0) {
+        return message.reply('❌ No valid mega folders with images found.');
+      }
+
+      const mid = Math.floor(bestFolder.length / 2);
+
+      const selected = [
+        bestFolder[mid - 1],
+        bestFolder[mid],
+        bestFolder[mid + 1]
+      ].filter(Boolean);
+
+      if (!selected.length) {
+        return message.reply('❌ Could not determine middle images.');
+      }
+
+      for (const file of selected) {
+        const buffer = await new Promise((resolve, reject) => {
+          file.downloadBuffer((err, data) => {
+            if (err) reject(err);
+            else resolve(data);
+          });
+        });
+
+        await message.channel.send({
+          files: [{ attachment: buffer, name: file.name }]
+        });
+      }
+
+    } catch (e) {
+      console.error(e);
+      message.reply('❌ Failed to process mega folder.');
+    }
+  }
 
   // ── !disable — stop all currently running auto-pings ────────────────────
   if (command === 'disable') {
@@ -325,7 +408,7 @@ client.on('messageCreate', async (message) => {
 
 client.once('ready', () => {
   console.log(`✅ Bot is online as ${client.user.tag}`);
-  console.log('Commands: !autopingeveryone, !autopinguser, !randommessages, !purge, !disable, !pingjoin');
+  console.log('Commands: !autopingeveryone, !autopinguser, !randommessages, !purge, !disable, !pingjoin, !middlemega');
 });
 
 client.login(process.env.DISCORD_TOKEN);
