@@ -13,7 +13,6 @@ const client = new Client({
 
 const everyonePingIntervals = new Map();
 const userPingIntervals = new Map();
-// pingJoinChannels: { guildId -> channelId }
 const pingJoinChannels = new Map();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -36,6 +35,44 @@ function formatCooldown(ms) {
 
 function requireAdmin(message) {
   return message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+}
+
+// Weighted random pick — members with "payed sorry" role get 1.5x weight
+// Builds a weighted pool: each message appears 1 or 1.5 times proportionally
+async function weightedRandomPick(pool, count, guild) {
+  // Build weighted list: boosted messages get 3 slots, normal get 2
+  // (ratio 3:2 = 1.5x)
+  const weighted = [];
+  for (const msg of pool) {
+    try {
+      const member = await guild.members.fetch(msg.author.id).catch(() => null);
+      const hasPaidRole = member?.roles.cache.some(r => r.name.toLowerCase() === 'payed sorry');
+      // Add 3 entries for boosted, 2 for normal — maintains 1.5x ratio
+      const slots = hasPaidRole ? 3 : 2;
+      for (let i = 0; i < slots; i++) weighted.push(msg);
+    } catch {
+      weighted.push(msg);
+      weighted.push(msg);
+    }
+  }
+
+  const picked = [];
+  const usedIds = new Set();
+
+  while (picked.length < count && weighted.length > 0) {
+    const idx = Math.floor(Math.random() * weighted.length);
+    const msg = weighted[idx];
+    if (!usedIds.has(msg.id)) {
+      picked.push(msg);
+      usedIds.add(msg.id);
+    }
+    // Remove all entries of this message from weighted pool
+    for (let i = weighted.length - 1; i >= 0; i--) {
+      if (weighted[i].id === msg.id) weighted.splice(i, 1);
+    }
+  }
+
+  return picked;
 }
 
 const PREFIX = '!';
@@ -245,18 +282,13 @@ client.on('messageCreate', async (message) => {
         await message.reply(`ℹ️ Only **${pool.length}** message${pool.length !== 1 ? 's' : ''} available — showing all of them.`);
       }
 
-      const picked = [];
-      while (picked.length < actualCount) {
-        const idx = Math.floor(Math.random() * pool.length);
-        picked.push(pool[idx]);
-        pool.splice(idx, 1);
-      }
+      const picked = await weightedRandomPick(pool, actualCount, message.guild);
 
       const lines = picked.map((m, i) =>
         `**${i + 1}.** **${m.author.username}**: ${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`
       ).join('\n\n');
 
-      return message.reply(`🎲 **${actualCount} Random Message${actualCount !== 1 ? 's' : ''}:**\n\n${lines}`);
+      return message.reply(`🎲 **${picked.length} Random Message${picked.length !== 1 ? 's' : ''}:**\n\n${lines}`);
     } catch (e) {
       console.error(e);
       return message.reply('❌ Failed to fetch messages.');
