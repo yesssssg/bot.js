@@ -15,28 +15,98 @@ const client = new Client({
 const everyonePingIntervals = new Map();
 const userPingIntervals = new Map();
 const pingJoinChannels = new Map();
+const spamTracker = new Map();
+
+// In-memory cache of post counts { userId -> count }
+const xPostCounts = new Map();
+
+// Channel ID where counts are stored
+const DATA_CHANNEL_ID = '1497467308010901525';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // X POST WATCHER CONFIG
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const X_WATCH = {
-
-  // The exact text the tweet must contain (case-insensitive)
   TARGET_TEXT: 'hey @grok remove the red things😋',
-
-  // What the bot replies when the tweet matches
-  REPLY: 'yes',
-
-  // What the bot replies when the tweet does NOT match
+  REPLY_PREFIX: 'good',
+  POSTS_REQUIRED: 3,
+  REWARD_ROLE: 'payed sorry',
+  ALREADY_DONE_REPLY: 'thanks',
   WRONG_REPLY: 'wrong post',
-
-  // Channel ID to link to in the wrong post message
   GUIDE_CHANNEL_ID: '1498948285581365353',
-
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ─── Data Channel Storage ─────────────────────────────────────────────────────
+
+// Each user's count is stored as a single pinned-style message in the data channel:
+// Format: "XCOUNT:userId:count"
+// On startup we fetch all messages from the channel and rebuild the in-memory map.
+// When a count updates we find the existing message for that user and edit it.
+// This way each user has exactly one message, always up to date.
+
+let dataChannel = null;
+// Map of userId -> Discord message object in the data channel
+const dataMessages = new Map();
+
+async function loadDataFromChannel() {
+  try {
+    dataChannel = await client.channels.fetch(DATA_CHANNEL_ID);
+    if (!dataChannel) { console.error('Data channel not found!'); return; }
+
+    // Fetch all messages in the data channel (up to 100 per fetch, loop if needed)
+    let lastId = null;
+    let allMessages = [];
+
+    while (true) {
+      const options = { limit: 100 };
+      if (lastId) options.before = lastId;
+      const batch = await dataChannel.messages.fetch(options);
+      if (batch.size === 0) break;
+      allMessages = allMessages.concat([...batch.values()]);
+      lastId = batch.last().id;
+      if (batch.size < 100) break;
+    }
+
+    // Parse each message
+    for (const msg of allMessages) {
+      if (!msg.content.startsWith('XCOUNT:')) continue;
+      const parts = msg.content.split(':');
+      if (parts.length !== 3) continue;
+      const userId = parts[1];
+      const count = parseInt(parts[2]);
+      if (isNaN(count)) continue;
+      xPostCounts.set(userId, count);
+      dataMessages.set(userId, msg);
+    }
+
+    console.log(`Loaded ${xPostCounts.size} user counts from data channel.`);
+  } catch (e) {
+    console.error('Failed to load data from channel:', e);
+  }
+}
+
+async function saveUserCount(userId, count) {
+  try {
+    if (!dataChannel) return;
+    const content = `XCOUNT:${userId}:${count}`;
+
+    if (dataMessages.has(userId)) {
+      // Edit existing message
+      const msg = dataMessages.get(userId);
+      const updated = await msg.edit(content);
+      dataMessages.set(userId, updated);
+    } else {
+      // Create new message
+      const newMsg = await dataChannel.send(content);
+      dataMessages.set(userId, newMsg);
+    }
+  } catch (e) {
+    console.error('Failed to save user count:', e);
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -115,14 +185,10 @@ async function weightedRandomPick(pool, count, guild) {
   return picked;
 }
 
-// Fetch a URL and return the body as a string, following redirects
 function fetchURL(url) {
   return new Promise((resolve, reject) => {
     https.get(url, {
-      headers: {
-        'User-Agent': 'bot',
-        'Accept': 'application/json',
-      }
+      headers: { 'User-Agent': 'bot', 'Accept': 'application/json' }
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return fetchURL(res.headers.location).then(resolve).catch(reject);
@@ -146,23 +212,19 @@ async function checkXLink(message, url) {
     const tweetId = extractTweetId(url);
     if (!tweetId) return;
 
-    // fxtwitter JSON API — returns tweet data cleanly, no browser needed
     const apiUrl = `https://api.fxtwitter.com/status/${tweetId}`;
     const raw = await fetchURL(apiUrl);
 
     let json;
-    try {
-      json = JSON.parse(raw);
-    } catch {
+    try { json = JSON.parse(raw); }
+    catch {
       console.error('fxtwitter returned non-JSON:', raw.slice(0, 200));
       return;
     }
 
-    // fxtwitter returns: { tweet: { text: "..." }, code: 200 }
     const tweetText = json?.tweet?.text;
-
     if (!tweetText) {
-      console.error('No tweet text found in fxtwitter response:', JSON.stringify(json).slice(0, 200));
+      console.error('No tweet text in fxtwitter response:', JSON.stringify(json).slice(0, 200));
       return;
     }
 
@@ -170,7 +232,28 @@ async function checkXLink(message, url) {
     const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase();
 
     if (tweetClean === targetClean) {
-      await message.reply(X_WATCH.REPLY);
+      const userId = message.author.id;
+      const member = await message.guild.members.fetch(userId).catch(() => null);
+      const hasRole = member?.roles.cache.some(r => r.name.toLowerCase() === X_WATCH.REWARD_ROLE.toLowerCase());
+
+      if (hasRole) {
+        return message.reply(X_WATCH.ALREADY_DONE_REPLY);
+      }
+
+      const currentCount = (xPostCounts.get(userId) || 0) + 1;
+      xPostCounts.set(userId, currentCount);
+      await saveUserCount(userId, currentCount);
+
+      if (currentCount >= X_WATCH.POSTS_REQUIRED) {
+        const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === X_WATCH.REWARD_ROLE.toLowerCase());
+        if (role && member) {
+          await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
+        }
+        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${currentCount}/${X_WATCH.POSTS_REQUIRED} posts — role given!`);
+      } else {
+        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${currentCount}/${X_WATCH.POSTS_REQUIRED} posts`);
+      }
+
     } else {
       await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`);
     }
@@ -180,6 +263,51 @@ async function checkXLink(message, url) {
   }
 }
 
+// ─── Anti-Spam ────────────────────────────────────────────────────────────────
+
+async function handleAntiSpam(message) {
+  const userId = message.author.id;
+  const now = Date.now();
+  const WINDOW = 5000;
+  const LIMIT = 5;
+
+  if (!spamTracker.has(userId)) spamTracker.set(userId, []);
+  const timestamps = spamTracker.get(userId);
+  timestamps.push({ time: now, messageId: message.id });
+  const recent = timestamps.filter(t => now - t.time < WINDOW);
+  spamTracker.set(userId, recent);
+
+  if (recent.length >= LIMIT) {
+    try {
+      const fetched = await message.channel.messages.fetch({ limit: 20 });
+      const toDelete = fetched.filter(m =>
+        m.author.id === userId &&
+        Date.now() - m.createdTimestamp < WINDOW + 1000
+      );
+      await message.channel.bulkDelete(toDelete, true).catch(() => {});
+    } catch (e) {
+      console.error('Failed to delete spam messages:', e);
+    }
+
+    spamTracker.set(userId, []);
+    await message.channel.send(`<@${userId}> no spamming`).catch(() => {});
+    return true;
+  }
+
+  return false;
+}
+
+// ─── Invite Link Filter ───────────────────────────────────────────────────────
+
+function containsInviteLink(content) {
+  const lower = content.toLowerCase();
+  return (
+    lower.includes('discord.gg') ||
+    lower.includes('discord.com/inv') ||
+    lower.includes('discordapp.')
+  );
+}
+
 const PREFIX = '!';
 
 // ─── Join Ping Handler ────────────────────────────────────────────────────────
@@ -187,7 +315,6 @@ const PREFIX = '!';
 client.on('guildMemberAdd', async (member) => {
   const channelId = pingJoinChannels.get(member.guild.id);
   if (!channelId) return;
-
   try {
     const channel = await member.guild.channels.fetch(channelId);
     if (!channel) return;
@@ -203,7 +330,20 @@ client.on('guildMemberAdd', async (member) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // ── X link watcher (runs on every message in every channel) ──────────────
+  // Ignore messages in the data channel
+  if (message.channel.id === DATA_CHANNEL_ID) return;
+
+  // Invite link filter
+  if (containsInviteLink(message.content)) {
+    await message.delete().catch(() => {});
+    return;
+  }
+
+  // Anti-spam
+  const wasSpam = await handleAntiSpam(message);
+  if (wasSpam) return;
+
+  // X link watcher
   const xLinkRegex = /https?:\/\/(?:twitter\.com|x\.com)\/\w+\/status\/\d+[^\s]*/gi;
   const xLinks = message.content.match(xLinkRegex);
   if (xLinks) {
@@ -373,8 +513,9 @@ client.on('messageCreate', async (message) => {
 
 // ─── Ready ────────────────────────────────────────────────────────────────────
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`✅ Bot is online as ${client.user.tag}`);
+  await loadDataFromChannel();
   console.log(`Watching X posts for: "${X_WATCH.TARGET_TEXT}"`);
 });
 
