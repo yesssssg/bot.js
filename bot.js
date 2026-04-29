@@ -23,21 +23,16 @@ const pingJoinChannels = new Map();
 const X_WATCH = {
 
   // The exact text the tweet must contain (case-insensitive)
-  // Can be a single word, a sentence, a link, emoji, anything:
-  // Examples:
-  //   TARGET_TEXT: 'hey',
-  //   TARGET_TEXT: 'check out this link https://example.com',
-  //   TARGET_TEXT: 'this is a really long tweet with lots of text in it',
   TARGET_TEXT: 'hey',
 
-  // What the bot replies with when it finds a match
-  // Can be anything — words, links, emojis, multiline, etc:
-  // Examples:
-  //   REPLY: 'yes',
-  //   REPLY: 'found it!',
-  //   REPLY: 'https://example.com/something',
-  //   REPLY: 'this tweet says hey!\ncheck it out',
+  // What the bot replies with when the tweet matches
   REPLY: 'yes',
+
+  // What the bot replies with when the tweet does NOT match
+  WRONG_REPLY: 'wrong post',
+
+  // The channel ID to link to in the wrong post message
+  GUIDE_CHANNEL_ID: '1498948285581365353',
 
 };
 
@@ -85,10 +80,7 @@ function findClosestChannel(guild, query) {
     if (name.startsWith(q)) score += 5;
     if (name.includes(q)) score += 3;
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = channel;
-    }
+    if (score > bestScore) { bestScore = score; bestMatch = channel; }
   }
 
   return bestScore > 0 ? bestMatch : null;
@@ -126,7 +118,6 @@ async function weightedRandomPick(pool, count, guild) {
   return picked;
 }
 
-// Fetch a URL and return the body as a string
 function fetchURL(url) {
   return new Promise((resolve, reject) => {
     https.get(url, {
@@ -134,7 +125,6 @@ function fetchURL(url) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
       }
     }, (res) => {
-      // Follow redirects
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return fetchURL(res.headers.location).then(resolve).catch(reject);
       }
@@ -145,9 +135,7 @@ function fetchURL(url) {
   });
 }
 
-// Extract tweet text from twitterwebviewer.com HTML
 function extractTweetText(html) {
-  // Try to find tweet text in common locations in the HTML
   const patterns = [
     /<meta name="description" content="([^"]+)"/i,
     /<meta property="og:description" content="([^"]+)"/i,
@@ -158,7 +146,6 @@ function extractTweetText(html) {
   for (const pattern of patterns) {
     const match = html.match(pattern);
     if (match && match[1]) {
-      // Decode HTML entities
       return match[1]
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
@@ -173,7 +160,6 @@ function extractTweetText(html) {
   return null;
 }
 
-// Extract tweet ID from x.com or twitter.com URL
 function extractTweetId(url) {
   const match = url.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
   return match ? match[1] : null;
@@ -192,12 +178,13 @@ async function checkXLink(message, url) {
 
     if (!tweetText) return;
 
-    // Check if tweet text exactly matches (case-insensitive, trimmed)
     const tweetClean = tweetText.trim().toLowerCase();
     const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase();
 
     if (tweetClean === targetClean) {
       await message.reply(X_WATCH.REPLY);
+    } else {
+      await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`);
     }
   } catch (e) {
     console.error('Failed to check X link:', e);
@@ -227,7 +214,7 @@ client.on('guildMemberAdd', async (member) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // ── X link watcher (runs on every message, no prefix needed) ─────────────
+  // ── X link watcher ────────────────────────────────────────────────────────
   const xLinkRegex = /https?:\/\/(?:twitter\.com|x\.com)\/\w+\/status\/\d+[^\s]*/gi;
   const xLinks = message.content.match(xLinkRegex);
   if (xLinks) {
@@ -328,10 +315,9 @@ client.on('messageCreate', async (message) => {
       let channelQuery = null;
 
       if (args.length > 0) {
-        const firstArg = args[0];
-        const firstIsNumber = !isNaN(parseInt(firstArg)) && isFinite(firstArg);
+        const firstIsNumber = !isNaN(parseInt(args[0])) && isFinite(args[0]);
         if (firstIsNumber) {
-          requestedCount = parseInt(firstArg);
+          requestedCount = parseInt(args[0]);
           if (args.length > 1) channelQuery = args.slice(1).join(' ');
         } else {
           channelQuery = args.join(' ');
