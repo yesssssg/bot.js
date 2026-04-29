@@ -23,7 +23,7 @@ const pingJoinChannels = new Map();
 const X_WATCH = {
 
   // The exact text the tweet must contain (case-insensitive)
-  TARGET_TEXT: 'hey',
+  TARGET_TEXT: 'hey @grok remove the red things😋',
 
   // What the bot replies when the tweet matches
   REPLY: 'yes',
