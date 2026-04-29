@@ -17,7 +17,7 @@ const userPingIntervals = new Map();
 const pingJoinChannels = new Map();
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// X POST WATCHER CONFIG — edit these to change what the bot looks for and says
+// X POST WATCHER CONFIG
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const X_WATCH = {
@@ -25,13 +25,13 @@ const X_WATCH = {
   // The exact text the tweet must contain (case-insensitive)
   TARGET_TEXT: 'hey',
 
-  // What the bot replies with when the tweet matches
+  // What the bot replies when the tweet matches
   REPLY: 'yes',
 
-  // What the bot replies with when the tweet does NOT match
+  // What the bot replies when the tweet does NOT match
   WRONG_REPLY: 'wrong post',
 
-  // The channel ID to link to in the wrong post message
+  // Channel ID to link to in the wrong post message
   GUIDE_CHANNEL_ID: '1498948285581365353',
 
 };
@@ -63,14 +63,12 @@ function requireAdmin(message) {
 function findClosestChannel(guild, query) {
   const q = query.toLowerCase().replace(/[^a-z0-9]/g, '');
   const channels = guild.channels.cache.filter(c => c.type === ChannelType.GuildText);
-
   let bestMatch = null;
   let bestScore = -1;
 
   for (const channel of channels.values()) {
     const name = channel.name.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (name === q) return channel;
-
     let score = 0;
     let nameIdx = 0;
     for (const char of q) {
@@ -79,7 +77,6 @@ function findClosestChannel(guild, query) {
     }
     if (name.startsWith(q)) score += 5;
     if (name.includes(q)) score += 3;
-
     if (score > bestScore) { bestScore = score; bestMatch = channel; }
   }
 
@@ -118,11 +115,13 @@ async function weightedRandomPick(pool, count, guild) {
   return picked;
 }
 
+// Fetch a URL and return the body as a string, following redirects
 function fetchURL(url) {
   return new Promise((resolve, reject) => {
     https.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'bot',
+        'Accept': 'application/json',
       }
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -133,31 +132,6 @@ function fetchURL(url) {
       res.on('end', () => resolve(data));
     }).on('error', reject);
   });
-}
-
-function extractTweetText(html) {
-  const patterns = [
-    /<meta name="description" content="([^"]+)"/i,
-    /<meta property="og:description" content="([^"]+)"/i,
-    /class="[^"]*tweet[^"]*"[^>]*>([^<]+)</i,
-    /<p[^>]*class="[^"]*text[^"]*"[^>]*>([\s\S]*?)<\/p>/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match && match[1]) {
-      return match[1]
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/<[^>]+>/g, '')
-        .trim();
-    }
-  }
-
-  return null;
 }
 
 function extractTweetId(url) {
@@ -172,11 +146,25 @@ async function checkXLink(message, url) {
     const tweetId = extractTweetId(url);
     if (!tweetId) return;
 
-    const viewerUrl = `https://twitterwebviewer.com/?tweet_id=${tweetId}`;
-    const html = await fetchURL(viewerUrl);
-    const tweetText = extractTweetText(html);
+    // fxtwitter JSON API — returns tweet data cleanly, no browser needed
+    const apiUrl = `https://api.fxtwitter.com/status/${tweetId}`;
+    const raw = await fetchURL(apiUrl);
 
-    if (!tweetText) return;
+    let json;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      console.error('fxtwitter returned non-JSON:', raw.slice(0, 200));
+      return;
+    }
+
+    // fxtwitter returns: { tweet: { text: "..." }, code: 200 }
+    const tweetText = json?.tweet?.text;
+
+    if (!tweetText) {
+      console.error('No tweet text found in fxtwitter response:', JSON.stringify(json).slice(0, 200));
+      return;
+    }
 
     const tweetClean = tweetText.trim().toLowerCase();
     const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase();
@@ -186,6 +174,7 @@ async function checkXLink(message, url) {
     } else {
       await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`);
     }
+
   } catch (e) {
     console.error('Failed to check X link:', e);
   }
@@ -214,7 +203,7 @@ client.on('guildMemberAdd', async (member) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // ── X link watcher ────────────────────────────────────────────────────────
+  // ── X link watcher (runs on every message in every channel) ──────────────
   const xLinkRegex = /https?:\/\/(?:twitter\.com|x\.com)\/\w+\/status\/\d+[^\s]*/gi;
   const xLinks = message.content.match(xLinkRegex);
   if (xLinks) {
@@ -231,11 +220,9 @@ client.on('messageCreate', async (message) => {
   // ── !disable ──────────────────────────────────────────────────────────────
   if (command === 'disable') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
-
     let stopped = 0;
     for (const [channelId, data] of everyonePingIntervals) { clearInterval(data.interval); everyonePingIntervals.delete(channelId); stopped++; }
     for (const [channelId, data] of userPingIntervals) { clearInterval(data.interval); userPingIntervals.delete(channelId); stopped++; }
-
     if (stopped === 0) return message.reply('ℹ️ No active auto-pings to stop.');
     return message.reply(`✅ Stopped **${stopped}** active auto-ping${stopped !== 1 ? 's' : ''}.`);
   }
@@ -257,7 +244,6 @@ client.on('messageCreate', async (message) => {
   if (command === 'autopingeveryone') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
     const sub = args[0]?.toLowerCase();
-
     if (sub === 'enable') {
       const cooldownStr = args[1];
       if (!cooldownStr) return message.reply('Usage: `!autopingeveryone enable <cooldown>`');
@@ -281,7 +267,6 @@ client.on('messageCreate', async (message) => {
   if (command === 'autopinguser') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
     const sub = args[0]?.toLowerCase();
-
     if (sub === 'enable') {
       const userMention = args[1];
       const cooldownStr = args[2];
