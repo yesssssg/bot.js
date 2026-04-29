@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits, PermissionsBitField, ChannelType } = require('discord.js');
+const https = require('https');
 
 const client = new Client({
   intents: [
@@ -14,6 +15,33 @@ const client = new Client({
 const everyonePingIntervals = new Map();
 const userPingIntervals = new Map();
 const pingJoinChannels = new Map();
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// X POST WATCHER CONFIG — edit these to change what the bot looks for and says
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const X_WATCH = {
+
+  // The exact text the tweet must contain (case-insensitive)
+  // Can be a single word, a sentence, a link, emoji, anything:
+  // Examples:
+  //   TARGET_TEXT: 'hey',
+  //   TARGET_TEXT: 'check out this link https://example.com',
+  //   TARGET_TEXT: 'this is a really long tweet with lots of text in it',
+  TARGET_TEXT: 'hey',
+
+  // What the bot replies with when it finds a match
+  // Can be anything — words, links, emojis, multiline, etc:
+  // Examples:
+  //   REPLY: 'yes',
+  //   REPLY: 'found it!',
+  //   REPLY: 'https://example.com/something',
+  //   REPLY: 'this tweet says hey!\ncheck it out',
+  REPLY: 'yes',
+
+};
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,7 +65,6 @@ function requireAdmin(message) {
   return message.member.permissions.has(PermissionsBitField.Flags.Administrator);
 }
 
-// Fuzzy channel finder — finds the closest matching text channel name
 function findClosestChannel(guild, query) {
   const q = query.toLowerCase().replace(/[^a-z0-9]/g, '');
   const channels = guild.channels.cache.filter(c => c.type === ChannelType.GuildText);
@@ -47,21 +74,15 @@ function findClosestChannel(guild, query) {
 
   for (const channel of channels.values()) {
     const name = channel.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-    // Exact match wins immediately
     if (name === q) return channel;
 
-    // Score: how many characters of the query appear in the name in order
     let score = 0;
     let nameIdx = 0;
     for (const char of q) {
       while (nameIdx < name.length && name[nameIdx] !== char) nameIdx++;
       if (nameIdx < name.length) { score++; nameIdx++; }
     }
-
-    // Bonus if name starts with query
     if (name.startsWith(q)) score += 5;
-    // Bonus if name contains query as substring
     if (name.includes(q)) score += 3;
 
     if (score > bestScore) {
@@ -73,7 +94,6 @@ function findClosestChannel(guild, query) {
   return bestScore > 0 ? bestMatch : null;
 }
 
-// Weighted random pick — members with "payed sorry" role get 1.5x weight
 async function weightedRandomPick(pool, count, guild) {
   const weighted = [];
   for (const msg of pool) {
@@ -106,6 +126,84 @@ async function weightedRandomPick(pool, count, guild) {
   return picked;
 }
 
+// Fetch a URL and return the body as a string
+function fetchURL(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+      }
+    }, (res) => {
+      // Follow redirects
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchURL(res.headers.location).then(resolve).catch(reject);
+      }
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+    }).on('error', reject);
+  });
+}
+
+// Extract tweet text from twitterwebviewer.com HTML
+function extractTweetText(html) {
+  // Try to find tweet text in common locations in the HTML
+  const patterns = [
+    /<meta name="description" content="([^"]+)"/i,
+    /<meta property="og:description" content="([^"]+)"/i,
+    /class="[^"]*tweet[^"]*"[^>]*>([^<]+)</i,
+    /<p[^>]*class="[^"]*text[^"]*"[^>]*>([\s\S]*?)<\/p>/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match && match[1]) {
+      // Decode HTML entities
+      return match[1]
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/<[^>]+>/g, '')
+        .trim();
+    }
+  }
+
+  return null;
+}
+
+// Extract tweet ID from x.com or twitter.com URL
+function extractTweetId(url) {
+  const match = url.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
+  return match ? match[1] : null;
+}
+
+// ─── X Link Watcher ───────────────────────────────────────────────────────────
+
+async function checkXLink(message, url) {
+  try {
+    const tweetId = extractTweetId(url);
+    if (!tweetId) return;
+
+    const viewerUrl = `https://twitterwebviewer.com/?tweet_id=${tweetId}`;
+    const html = await fetchURL(viewerUrl);
+    const tweetText = extractTweetText(html);
+
+    if (!tweetText) return;
+
+    // Check if tweet text exactly matches (case-insensitive, trimmed)
+    const tweetClean = tweetText.trim().toLowerCase();
+    const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase();
+
+    if (tweetClean === targetClean) {
+      await message.reply(X_WATCH.REPLY);
+    }
+  } catch (e) {
+    console.error('Failed to check X link:', e);
+  }
+}
+
 const PREFIX = '!';
 
 // ─── Join Ping Handler ────────────────────────────────────────────────────────
@@ -128,30 +226,28 @@ client.on('guildMemberAdd', async (member) => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+
+  // ── X link watcher (runs on every message, no prefix needed) ─────────────
+  const xLinkRegex = /https?:\/\/(?:twitter\.com|x\.com)\/\w+\/status\/\d+[^\s]*/gi;
+  const xLinks = message.content.match(xLinkRegex);
+  if (xLinks) {
+    for (const link of xLinks) {
+      await checkXLink(message, link);
+    }
+  }
+
   if (!message.content.startsWith(PREFIX)) return;
 
   const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = args.shift().toLowerCase();
 
-  // ── !disable ─────────────────────────────────────────────────────────────
+  // ── !disable ──────────────────────────────────────────────────────────────
   if (command === 'disable') {
-    if (!requireAdmin(message)) {
-      return message.reply('❌ You need Administrator permission to use this command.');
-    }
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
 
     let stopped = 0;
-
-    for (const [channelId, data] of everyonePingIntervals) {
-      clearInterval(data.interval);
-      everyonePingIntervals.delete(channelId);
-      stopped++;
-    }
-
-    for (const [channelId, data] of userPingIntervals) {
-      clearInterval(data.interval);
-      userPingIntervals.delete(channelId);
-      stopped++;
-    }
+    for (const [channelId, data] of everyonePingIntervals) { clearInterval(data.interval); everyonePingIntervals.delete(channelId); stopped++; }
+    for (const [channelId, data] of userPingIntervals) { clearInterval(data.interval); userPingIntervals.delete(channelId); stopped++; }
 
     if (stopped === 0) return message.reply('ℹ️ No active auto-pings to stop.');
     return message.reply(`✅ Stopped **${stopped}** active auto-ping${stopped !== 1 ? 's' : ''}.`);
@@ -159,141 +255,91 @@ client.on('messageCreate', async (message) => {
 
   // ── !pingjoin ─────────────────────────────────────────────────────────────
   if (command === 'pingjoin') {
-    if (!requireAdmin(message)) {
-      return message.reply('❌ You need Administrator permission to use this command.');
-    }
-
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
     const sub = args[0]?.toLowerCase();
-
-    if (sub === 'enable') {
-      pingJoinChannels.set(message.guild.id, message.channel.id);
-      return message.reply(`✅ Join pings **enabled** — new members will be pinged in this channel (ping deleted immediately).`);
-    }
-
+    if (sub === 'enable') { pingJoinChannels.set(message.guild.id, message.channel.id); return message.reply(`✅ Join pings **enabled** in this channel.`); }
     if (sub === 'disable') {
       if (!pingJoinChannels.has(message.guild.id)) return message.reply('ℹ️ Join pings are not active.');
       pingJoinChannels.delete(message.guild.id);
       return message.reply('✅ Join pings **disabled**.');
     }
-
     return message.reply('Usage: `!pingjoin enable` or `!pingjoin disable`');
   }
 
   // ── !autopingeveryone ─────────────────────────────────────────────────────
   if (command === 'autopingeveryone') {
-    if (!requireAdmin(message)) {
-      return message.reply('❌ You need Administrator permission to use this command.');
-    }
-
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
     const sub = args[0]?.toLowerCase();
 
     if (sub === 'enable') {
       const cooldownStr = args[1];
-      if (!cooldownStr) return message.reply('Usage: `!autopingeveryone enable <cooldown>` (e.g. `30s`, `5m`, `2h`)');
+      if (!cooldownStr) return message.reply('Usage: `!autopingeveryone enable <cooldown>`');
       const cooldownMs = parseCooldown(cooldownStr);
-      if (!cooldownMs) return message.reply('❌ Invalid cooldown. Use formats like `30s`, `5m`, `2h`, `1d`.');
-
-      if (everyonePingIntervals.has(message.channel.id)) {
-        clearInterval(everyonePingIntervals.get(message.channel.id).interval);
-      }
-
-      const interval = setInterval(async () => {
-        try { await message.channel.send('@everyone'); }
-        catch (e) { console.error('Failed to send @everyone ping:', e); }
-      }, cooldownMs);
-
+      if (!cooldownMs) return message.reply('❌ Invalid cooldown.');
+      if (everyonePingIntervals.has(message.channel.id)) clearInterval(everyonePingIntervals.get(message.channel.id).interval);
+      const interval = setInterval(async () => { try { await message.channel.send('@everyone'); } catch (e) { console.error(e); } }, cooldownMs);
       everyonePingIntervals.set(message.channel.id, { interval, cooldownMs });
-      return message.reply(`✅ Auto @everyone ping **enabled** in this channel every **${formatCooldown(cooldownMs)}**.`);
+      return message.reply(`✅ Auto @everyone ping enabled every **${formatCooldown(cooldownMs)}**.`);
     }
-
     if (sub === 'disable') {
-      if (!everyonePingIntervals.has(message.channel.id)) return message.reply('ℹ️ Auto @everyone ping is not active in this channel.');
+      if (!everyonePingIntervals.has(message.channel.id)) return message.reply('ℹ️ Not active in this channel.');
       clearInterval(everyonePingIntervals.get(message.channel.id).interval);
       everyonePingIntervals.delete(message.channel.id);
-      return message.reply('✅ Auto @everyone ping **disabled** in this channel.');
+      return message.reply('✅ Auto @everyone ping disabled.');
     }
-
     return message.reply('Usage: `!autopingeveryone enable <cooldown>` or `!autopingeveryone disable`');
   }
 
   // ── !autopinguser ─────────────────────────────────────────────────────────
   if (command === 'autopinguser') {
-    if (!requireAdmin(message)) {
-      return message.reply('❌ You need Administrator permission to use this command.');
-    }
-
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
     const sub = args[0]?.toLowerCase();
 
     if (sub === 'enable') {
       const userMention = args[1];
       const cooldownStr = args[2];
-
       if (!userMention || !cooldownStr) return message.reply('Usage: `!autopinguser enable @user <cooldown>`');
-
       const userId = userMention.replace(/[<@!>]/g, '');
       let targetUser;
-      try { targetUser = await message.guild.members.fetch(userId); }
-      catch { return message.reply('❌ Could not find that user in this server.'); }
-
+      try { targetUser = await message.guild.members.fetch(userId); } catch { return message.reply('❌ Could not find that user.'); }
       const cooldownMs = parseCooldown(cooldownStr);
-      if (!cooldownMs) return message.reply('❌ Invalid cooldown. Use formats like `10s`, `5m`, `2h`.');
-
-      if (userPingIntervals.has(message.channel.id)) {
-        clearInterval(userPingIntervals.get(message.channel.id).interval);
-      }
-
+      if (!cooldownMs) return message.reply('❌ Invalid cooldown.');
+      if (userPingIntervals.has(message.channel.id)) clearInterval(userPingIntervals.get(message.channel.id).interval);
       const interval = setInterval(async () => {
-        try {
-          const ping = await message.channel.send(`<@${userId}>`);
-          setTimeout(() => ping.delete().catch(() => {}), 500);
-        } catch (e) { console.error('Failed to send user ping:', e); }
+        try { const ping = await message.channel.send(`<@${userId}>`); setTimeout(() => ping.delete().catch(() => {}), 500); }
+        catch (e) { console.error(e); }
       }, cooldownMs);
-
       userPingIntervals.set(message.channel.id, { interval, userId, cooldownMs });
-      return message.reply(`✅ Auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}** (ping deleted after 0.5s).`);
+      return message.reply(`✅ Auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}**.`);
     }
-
     if (sub === 'disable') {
-      if (!userPingIntervals.has(message.channel.id)) return message.reply('ℹ️ Auto user ping is not active in this channel.');
+      if (!userPingIntervals.has(message.channel.id)) return message.reply('ℹ️ Not active in this channel.');
       clearInterval(userPingIntervals.get(message.channel.id).interval);
       userPingIntervals.delete(message.channel.id);
-      return message.reply('✅ Auto user ping **disabled** in this channel.');
+      return message.reply('✅ Auto user ping disabled.');
     }
-
     return message.reply('Usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
   }
 
   // ── !randommessages [count] [channel] ────────────────────────────────────
   if (command === 'randommessages') {
     try {
-      // Parse args:
-      // !randommessages              -> count=3, current channel
-      // !randommessages 5            -> count=5, current channel
-      // !randommessages requests     -> count=3, fuzzy match channel
-      // !randommessages 5 requests   -> count=5, fuzzy match channel
-
       let requestedCount = 3;
       let channelQuery = null;
 
       if (args.length > 0) {
         const firstArg = args[0];
         const firstIsNumber = !isNaN(parseInt(firstArg)) && isFinite(firstArg);
-
         if (firstIsNumber) {
           requestedCount = parseInt(firstArg);
-          if (args.length > 1) {
-            channelQuery = args.slice(1).join(' ');
-          }
+          if (args.length > 1) channelQuery = args.slice(1).join(' ');
         } else {
           channelQuery = args.join(' ');
         }
       }
 
-      if (isNaN(requestedCount) || requestedCount < 1) {
-        return message.reply('Usage: `!randommessages [number] [channel name]`');
-      }
+      if (isNaN(requestedCount) || requestedCount < 1) return message.reply('Usage: `!randommessages [number] [channel name]`');
 
-      // Resolve target channel
       let targetChannel = message.channel;
       if (channelQuery) {
         const found = findClosestChannel(message.guild, channelQuery);
@@ -301,27 +347,17 @@ client.on('messageCreate', async (message) => {
         targetChannel = found;
       }
 
-      // Fetch messages from target channel
       let fetched = await targetChannel.messages.fetch({ limit: 100 });
-      let pool = fetched.filter(m =>
-        !m.author.bot &&
-        m.content.trim().length > 0
-      ).map(m => m);
+      let pool = fetched.filter(m => !m.author.bot && m.content.trim().length > 0).map(m => m);
 
-      if (pool.length === 0) {
-        return message.reply(`No messages found in ${targetChannel.name === message.channel.name ? 'this channel' : `#${targetChannel.name}`}.`);
-      }
+      if (pool.length === 0) return message.reply(`No messages found in ${targetChannel.id !== message.channel.id ? `#${targetChannel.name}` : 'this channel'}.`);
 
       const actualCount = Math.min(requestedCount, pool.length);
-
       const picked = await weightedRandomPick(pool, actualCount, message.guild);
 
       const sourceNote = targetChannel.id !== message.channel.id ? ` from #${targetChannel.name}` : '';
       const header = `${picked.length} random message${picked.length !== 1 ? 's' : ''}${sourceNote}:\n`;
-
-      const lines = picked.map(m =>
-        `${m.author.username}\n${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`
-      ).join('\n\n');
+      const lines = picked.map(m => `${m.author.username}\n${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`).join('\n\n');
 
       return message.reply(header + lines);
     } catch (e) {
@@ -332,25 +368,16 @@ client.on('messageCreate', async (message) => {
 
   // ── !purge ────────────────────────────────────────────────────────────────
   if (command === 'purge') {
-    if (!requireAdmin(message)) {
-      return message.reply('❌ You need Administrator permission to use this command.');
-    }
-    if (!message.channel.permissionsFor(message.guild.members.me).has(PermissionsBitField.Flags.ManageMessages)) {
-      return message.reply('❌ I need the **Manage Messages** permission to delete messages.');
-    }
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!message.channel.permissionsFor(message.guild.members.me).has(PermissionsBitField.Flags.ManageMessages)) return message.reply('❌ I need Manage Messages permission.');
 
     const excludeIndex = args.indexOf('--exclude');
-    const countStr = args[0];
-    const count = parseInt(countStr);
-
-    if (isNaN(count) || count < 1 || count > 100) {
-      return message.reply('Usage: `!purge <1-100> [--exclude @user1 @user2 ...]`');
-    }
+    const count = parseInt(args[0]);
+    if (isNaN(count) || count < 1 || count > 100) return message.reply('Usage: `!purge <1-100> [--exclude @user1 @user2 ...]`');
 
     const excludedIds = new Set();
     if (excludeIndex !== -1) {
-      const excludeMentions = args.slice(excludeIndex + 1);
-      for (const mention of excludeMentions) {
+      for (const mention of args.slice(excludeIndex + 1)) {
         const id = mention.replace(/[<@!>]/g, '');
         if (id) excludedIds.add(id);
       }
@@ -358,27 +385,12 @@ client.on('messageCreate', async (message) => {
 
     try {
       await message.delete().catch(() => {});
-
       let fetched = await message.channel.messages.fetch({ limit: 100 });
-
       const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-      let toDelete = fetched
-        .filter(m =>
-          !excludedIds.has(m.author.id) &&
-          m.createdTimestamp > twoWeeksAgo
-        )
-        .map(m => m)
-        .slice(0, count);
-
-      if (toDelete.length === 0) {
-        return message.channel.send('ℹ️ No messages to delete (they may be older than 14 days or all from excluded users).');
-      }
-
+      let toDelete = fetched.filter(m => !excludedIds.has(m.author.id) && m.createdTimestamp > twoWeeksAgo).map(m => m).slice(0, count);
+      if (toDelete.length === 0) return message.channel.send('ℹ️ No messages to delete.');
       await message.channel.bulkDelete(toDelete, true);
-
-      const excludeNote = excludedIds.size > 0
-        ? ` (excluded ${excludedIds.size} user${excludedIds.size > 1 ? 's' : ''})`
-        : '';
+      const excludeNote = excludedIds.size > 0 ? ` (excluded ${excludedIds.size} user${excludedIds.size > 1 ? 's' : ''})` : '';
       const reply = await message.channel.send(`🗑️ Deleted **${toDelete.length}** message${toDelete.length !== 1 ? 's' : ''}${excludeNote}.`);
       setTimeout(() => reply.delete().catch(() => {}), 4000);
     } catch (e) {
@@ -392,7 +404,7 @@ client.on('messageCreate', async (message) => {
 
 client.once('ready', () => {
   console.log(`✅ Bot is online as ${client.user.tag}`);
-  console.log('Commands: !autopingeveryone, !autopinguser, !randommessages, !purge, !disable, !pingjoin');
+  console.log(`Watching X posts for: "${X_WATCH.TARGET_TEXT}"`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
