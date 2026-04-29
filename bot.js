@@ -20,7 +20,10 @@ const spamTracker = new Map();
 // In-memory cache of post counts { userId -> count }
 const xPostCounts = new Map();
 
-// Channel ID where counts are stored
+// In-memory set of already-seen X link tweet IDs
+const seenXLinks = new Set();
+
+// Channel ID where counts AND seen links are stored
 const DATA_CHANNEL_ID = '1497467308010901525';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -41,22 +44,18 @@ const X_WATCH = {
 
 // ─── Data Channel Storage ─────────────────────────────────────────────────────
 
-// Each user's count is stored as a single pinned-style message in the data channel:
-// Format: "XCOUNT:userId:count"
-// On startup we fetch all messages from the channel and rebuild the in-memory map.
-// When a count updates we find the existing message for that user and edit it.
-// This way each user has exactly one message, always up to date.
+// User counts:  "XCOUNT:userId:count"
+// Seen X links: "XLINK:tweetId"
+// On startup we fetch all messages and rebuild both in-memory structures.
 
 let dataChannel = null;
-// Map of userId -> Discord message object in the data channel
-const dataMessages = new Map();
+const dataMessages = new Map(); // userId -> Discord message (for counts)
 
 async function loadDataFromChannel() {
   try {
     dataChannel = await client.channels.fetch(DATA_CHANNEL_ID);
     if (!dataChannel) { console.error('Data channel not found!'); return; }
 
-    // Fetch all messages in the data channel (up to 100 per fetch, loop if needed)
     let lastId = null;
     let allMessages = [];
 
@@ -70,19 +69,28 @@ async function loadDataFromChannel() {
       if (batch.size < 100) break;
     }
 
-    // Parse each message
     for (const msg of allMessages) {
-      if (!msg.content.startsWith('XCOUNT:')) continue;
-      const parts = msg.content.split(':');
-      if (parts.length !== 3) continue;
-      const userId = parts[1];
-      const count = parseInt(parts[2]);
-      if (isNaN(count)) continue;
-      xPostCounts.set(userId, count);
-      dataMessages.set(userId, msg);
+      // Load user counts
+      if (msg.content.startsWith('XCOUNT:')) {
+        const parts = msg.content.split(':');
+        if (parts.length !== 3) continue;
+        const userId = parts[1];
+        const count = parseInt(parts[2]);
+        if (isNaN(count)) continue;
+        xPostCounts.set(userId, count);
+        dataMessages.set(userId, msg);
+        continue;
+      }
+
+      // Load seen X links
+      if (msg.content.startsWith('XLINK:')) {
+        const tweetId = msg.content.slice(6).trim();
+        if (tweetId) seenXLinks.add(tweetId);
+        continue;
+      }
     }
 
-    console.log(`Loaded ${xPostCounts.size} user counts from data channel.`);
+    console.log(`Loaded ${xPostCounts.size} user counts and ${seenXLinks.size} seen links from data channel.`);
   } catch (e) {
     console.error('Failed to load data from channel:', e);
   }
@@ -94,17 +102,26 @@ async function saveUserCount(userId, count) {
     const content = `XCOUNT:${userId}:${count}`;
 
     if (dataMessages.has(userId)) {
-      // Edit existing message
       const msg = dataMessages.get(userId);
       const updated = await msg.edit(content);
       dataMessages.set(userId, updated);
     } else {
-      // Create new message
       const newMsg = await dataChannel.send(content);
       dataMessages.set(userId, newMsg);
     }
   } catch (e) {
     console.error('Failed to save user count:', e);
+  }
+}
+
+// Record a tweet ID as seen (persisted to the data channel)
+async function saveSeenLink(tweetId) {
+  try {
+    if (!dataChannel) return;
+    seenXLinks.add(tweetId);
+    await dataChannel.send(`XLINK:${tweetId}`);
+  } catch (e) {
+    console.error('Failed to save seen link:', e);
   }
 }
 
@@ -205,12 +222,32 @@ function extractTweetId(url) {
   return match ? match[1] : null;
 }
 
+// ─── Format Spam Check ────────────────────────────────────────────────────────
+
+// Returns true if the message content violates formatting rules:
+//   - more than 3 newlines
+//   - any single character repeated 49 or more times consecutively
+function isFormatSpam(content) {
+  const newlineCount = (content.match(/\n/g) || []).length;
+  if (newlineCount > 3) return true;
+  if (/(.)\1{48,}/.test(content)) return true;
+  return false;
+}
+
 // ─── X Link Watcher ───────────────────────────────────────────────────────────
 
 async function checkXLink(message, url) {
   try {
     const tweetId = extractTweetId(url);
     if (!tweetId) return;
+
+    const userId = message.author.id;
+    const currentCount = xPostCounts.get(userId) || 0;
+
+    // Check if this exact tweet ID has already been submitted (in-memory + data channel)
+    if (seenXLinks.has(tweetId)) {
+      return message.reply(`sent already\ncurrent post count: ${currentCount}/${X_WATCH.POSTS_REQUIRED}`);
+    }
 
     const apiUrl = `https://api.fxtwitter.com/status/${tweetId}`;
     const raw = await fetchURL(apiUrl);
@@ -232,29 +269,35 @@ async function checkXLink(message, url) {
     const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase();
 
     if (tweetClean === targetClean) {
-      const userId = message.author.id;
       const member = await message.guild.members.fetch(userId).catch(() => null);
       const hasRole = member?.roles.cache.some(r => r.name.toLowerCase() === X_WATCH.REWARD_ROLE.toLowerCase());
 
       if (hasRole) {
+        // Mark as seen even if user already has role, so the link can't be reused
+        await saveSeenLink(tweetId);
         return message.reply(X_WATCH.ALREADY_DONE_REPLY);
       }
 
-      const currentCount = (xPostCounts.get(userId) || 0) + 1;
-      xPostCounts.set(userId, currentCount);
-      await saveUserCount(userId, currentCount);
+      // Mark the link as seen and persist it
+      await saveSeenLink(tweetId);
 
-      if (currentCount >= X_WATCH.POSTS_REQUIRED) {
+      const newCount = currentCount + 1;
+      xPostCounts.set(userId, newCount);
+      await saveUserCount(userId, newCount);
+
+      if (newCount >= X_WATCH.POSTS_REQUIRED) {
         const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === X_WATCH.REWARD_ROLE.toLowerCase());
         if (role && member) {
           await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
         }
-        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${currentCount}/${X_WATCH.POSTS_REQUIRED} posts — role given!`);
+        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts — role given!`);
       } else {
-        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${currentCount}/${X_WATCH.POSTS_REQUIRED} posts`);
+        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts`);
       }
 
     } else {
+      // Wrong content — still mark it seen so they can't delete & retry with the same link
+      await saveSeenLink(tweetId);
       await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`);
     }
 
@@ -271,6 +314,14 @@ async function handleAntiSpam(message) {
   const WINDOW = 5000;
   const LIMIT = 5;
 
+  // ── Format spam check (newlines / repeated characters) ──────────────────
+  if (isFormatSpam(message.content)) {
+    await message.delete().catch(() => {});
+    await message.channel.send(`<@${userId}> no spamming`).catch(() => {});
+    return true;
+  }
+
+  // ── Rapid-fire spam check ────────────────────────────────────────────────
   if (!spamTracker.has(userId)) spamTracker.set(userId, []);
   const timestamps = spamTracker.get(userId);
   timestamps.push({ time: now, messageId: message.id });
@@ -339,7 +390,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Anti-spam
+  // Anti-spam (includes format spam check)
   const wasSpam = await handleAntiSpam(message);
   if (wasSpam) return;
 
