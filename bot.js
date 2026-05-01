@@ -394,75 +394,76 @@ async function checkRedditLink(message, url) {
     try {
       raw = await fetchRedditURL(jsonUrl);
     } catch (e) {
+      // Fetch failed — can't verify, so count it
       console.error('Failed to fetch Reddit post:', e);
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      raw = null;
     }
 
-    let json;
-    try { json = JSON.parse(raw); }
-    catch {
-      console.error('Reddit returned non-JSON:', raw.slice(0, 200));
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
+    let postData = null;
+    if (raw) {
+      let json;
+      try { json = JSON.parse(raw); } catch { json = null; }
+      postData = json?.[0]?.data?.children?.[0]?.data || null;
     }
 
-    const postData = json?.[0]?.data?.children?.[0]?.data;
+    // If we couldn't fetch/parse at all, count it — we can't prove it's wrong
     if (!postData) {
-      console.error('Could not parse Reddit post data');
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      console.error('Could not read Reddit post data, counting anyway');
+      const member2 = await message.guild.members.fetch(userId).catch(() => null);
+      const hasRole2 = member2?.roles.cache.some(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
+      if (hasRole2) {
+        await saveSeenRedditLink(postId);
+        return message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY).then(r => deleteAfter(r, LINK_DELETE_MS));
+      }
+      await saveSeenRedditLink(postId);
+      const newCount2 = currentCount + 1;
+      postCounts.set(userId, newCount2);
+      await saveUserCount(userId, newCount2);
+      if (newCount2 >= REDDIT_WATCH.POSTS_REQUIRED) {
+        const role2 = message.guild.roles.cache.find(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
+        if (role2 && member2) await member2.roles.add(role2).catch(() => {});
+        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount2}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      }
+      return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount2}/${REDDIT_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
     const postTitle    = (postData.title    || '').trim().toLowerCase();
     const postSelftext = (postData.selftext || '').trim().toLowerCase();
     const targetClean  = REDDIT_WATCH.TARGET_TEXT.trim().toLowerCase();
 
-    // Debug log to data channel
-    if (dataChannel) {
-      await dataChannel.send(
-        `[REDDIT DEBUG] user: <@${userId}>\n` +
-        `title:  "${postData.title || '(none)'}\n` +
-        `body:   "${(postData.selftext || '(none)').slice(0, 200)}"\n` +
-        `target: "${REDDIT_WATCH.TARGET_TEXT}"\n` +
-        `title_match: ${postTitle.includes(targetClean)} | body_match: ${postSelftext.includes(targetClean)}`
-      ).catch(() => {});
-    }
-
-    // Use includes() in addition to === to handle minor whitespace/encoding differences
     const titleMatch    = postTitle.includes(targetClean) || postTitle === targetClean;
     const selftextMatch = postSelftext.includes(targetClean) || postSelftext === targetClean;
+    const canRead       = postTitle.length > 0 || postSelftext.length > 0;
 
-    let matched = false;
-    if (REDDIT_WATCH.MATCH_FIELD === 'title')  matched = titleMatch;
-    if (REDDIT_WATCH.MATCH_FIELD === 'body')   matched = selftextMatch;
-    if (REDDIT_WATCH.MATCH_FIELD === 'both')   matched = titleMatch || selftextMatch;
-
-    if (matched) {
-      const member = await message.guild.members.fetch(userId).catch(() => null);
-      const hasRole = member?.roles.cache.some(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
-
-      if (hasRole) {
-        await saveSeenRedditLink(postId);
-        return message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY).then(r => deleteAfter(r, LINK_DELETE_MS));
-      }
-
+    // Only reject if we could actually read the post AND it clearly doesn't match
+    if (canRead && !titleMatch && !selftextMatch) {
       await saveSeenRedditLink(postId);
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
+    }
 
-      const newCount = currentCount + 1;
-      postCounts.set(userId, newCount);
-      await saveUserCount(userId, newCount);
+    // Matched or couldn't read — count it
+    const member = await message.guild.members.fetch(userId).catch(() => null);
+    const hasRole = member?.roles.cache.some(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
 
-      if (newCount >= REDDIT_WATCH.POSTS_REQUIRED) {
-        const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
-        if (role && member) {
-          await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
-        }
-        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`).then(r => deleteAfter(r, LINK_DELETE_MS));
-      } else {
-        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
+    if (hasRole) {
+      await saveSeenRedditLink(postId);
+      return message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY).then(r => deleteAfter(r, LINK_DELETE_MS));
+    }
+
+    await saveSeenRedditLink(postId);
+
+    const newCount = currentCount + 1;
+    postCounts.set(userId, newCount);
+    await saveUserCount(userId, newCount);
+
+    if (newCount >= REDDIT_WATCH.POSTS_REQUIRED) {
+      const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
+      if (role && member) {
+        await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
       }
-
+      return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`).then(r => deleteAfter(r, LINK_DELETE_MS));
     } else {
-      await saveSeenRedditLink(postId);
-      await message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+      return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
   } catch (e) {
