@@ -308,7 +308,7 @@ async function checkXLink(message, url) {
 
     // Check if this exact tweet ID has already been submitted (in-memory + data channel)
     if (seenXLinks.has(tweetId)) {
-      return message.reply(`sent already\ncurrent post count: ${currentCount}/${X_WATCH.POSTS_REQUIRED}`);
+      return message.reply(`sent already\ncurrent post count: ${currentCount}/${X_WATCH.POSTS_REQUIRED}`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
     const apiUrl = `https://api.fxtwitter.com/status/${tweetId}`;
@@ -336,7 +336,7 @@ async function checkXLink(message, url) {
 
       if (hasRole) {
         await saveSeenLink(tweetId);
-        return message.reply(X_WATCH.ALREADY_DONE_REPLY);
+        return message.reply(X_WATCH.ALREADY_DONE_REPLY).then(r => deleteAfter(r, LINK_DELETE_MS));
       }
 
       await saveSeenLink(tweetId);
@@ -350,14 +350,14 @@ async function checkXLink(message, url) {
         if (role && member) {
           await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
         }
-        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts — role given!`);
+        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts — role given!`).then(r => deleteAfter(r, LINK_DELETE_MS));
       } else {
-        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts`);
+        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
       }
 
     } else {
       await saveSeenLink(tweetId);
-      await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`);
+      await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
   } catch (e) {
@@ -377,7 +377,7 @@ async function checkRedditLink(message, url) {
   try {
     const postId = extractRedditPostId(url);
     if (!postId) {
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
     const userId = message.author.id;
@@ -385,7 +385,7 @@ async function checkRedditLink(message, url) {
 
     // Duplicate check
     if (seenRedditLinks.has(postId)) {
-      return message.reply(`sent already\ncurrent post count: ${currentCount}/${REDDIT_WATCH.POSTS_REQUIRED}`);
+      return message.reply(`sent already\ncurrent post count: ${currentCount}/${REDDIT_WATCH.POSTS_REQUIRED}`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
     // Fetch post data via Reddit's public .json endpoint
@@ -395,30 +395,36 @@ async function checkRedditLink(message, url) {
       raw = await fetchRedditURL(jsonUrl);
     } catch (e) {
       console.error('Failed to fetch Reddit post:', e);
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
     let json;
     try { json = JSON.parse(raw); }
     catch {
       console.error('Reddit returned non-JSON:', raw.slice(0, 200));
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
     const postData = json?.[0]?.data?.children?.[0]?.data;
     if (!postData) {
       console.error('Could not parse Reddit post data');
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
     const postTitle    = (postData.title    || '').trim().toLowerCase();
     const postSelftext = (postData.selftext || '').trim().toLowerCase();
     const targetClean  = REDDIT_WATCH.TARGET_TEXT.trim().toLowerCase();
 
-    // Log what we got vs what we expect to help debug mismatches
-    console.log(`Reddit post title: "${postTitle}"`);
-    console.log(`Reddit post body:  "${postSelftext.slice(0, 100)}"`);
-    console.log(`Target text:       "${targetClean}"`);
+    // Debug log to data channel
+    if (dataChannel) {
+      await dataChannel.send(
+        `[REDDIT DEBUG] user: <@${userId}>\n` +
+        `title:  "${postData.title || '(none)'}\n` +
+        `body:   "${(postData.selftext || '(none)').slice(0, 200)}"\n` +
+        `target: "${REDDIT_WATCH.TARGET_TEXT}"\n` +
+        `title_match: ${postTitle.includes(targetClean)} | body_match: ${postSelftext.includes(targetClean)}`
+      ).catch(() => {});
+    }
 
     // Use includes() in addition to === to handle minor whitespace/encoding differences
     const titleMatch    = postTitle.includes(targetClean) || postTitle === targetClean;
@@ -435,7 +441,7 @@ async function checkRedditLink(message, url) {
 
       if (hasRole) {
         await saveSeenRedditLink(postId);
-        return message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY);
+        return message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY).then(r => deleteAfter(r, LINK_DELETE_MS));
       }
 
       await saveSeenRedditLink(postId);
@@ -449,9 +455,9 @@ async function checkRedditLink(message, url) {
         if (role && member) {
           await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
         }
-        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`);
+        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`).then(r => deleteAfter(r, LINK_DELETE_MS));
       } else {
-        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts`);
+        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
       }
 
     } else {
@@ -516,6 +522,12 @@ function containsInviteLink(content) {
 }
 
 const PREFIX = '!';
+const LINK_DELETE_MS = 2 * 60 * 1000; // 2 minutes
+
+// Delete a message after a delay, silently
+function deleteAfter(msg, ms) {
+  setTimeout(() => msg.delete().catch(() => {}), ms);
+}
 
 // ─── Join Ping Handler ────────────────────────────────────────────────────────
 
@@ -549,6 +561,13 @@ client.on('messageCreate', async (message) => {
   // Anti-spam (includes format spam check)
   const wasSpam = await handleAntiSpam(message);
   if (wasSpam) return;
+
+  // Auto-delete messages containing any URL after 2 minutes (only in the link channel)
+  const LINK_CHANNEL_ID = '1498957410906406942';
+  const anyLinkRegex = /https?:\/\//i;
+  if (message.channel.id === LINK_CHANNEL_ID && anyLinkRegex.test(message.content)) {
+    deleteAfter(message, LINK_DELETE_MS);
+  }
 
   // X link watcher
   const xLinkRegex = /https?:\/\/(?:twitter\.com|x\.com)\/\w+\/status\/\d+[^\s]*/gi;
