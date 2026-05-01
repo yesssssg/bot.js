@@ -471,6 +471,9 @@ async function checkRedditLink(message, url) {
   }
 }
 
+// Tracks ping warnings per user for timeout escalation: { userId -> [timestamp, ...] }
+const pingWarnTracker = new Map();
+
 async function handleAntiSpam(message) {
   const userId = message.author.id;
   const now = Date.now();
@@ -480,7 +483,8 @@ async function handleAntiSpam(message) {
   // ── Format spam check (newlines / repeated characters) ──────────────────
   if (isFormatSpam(message.content)) {
     await message.delete().catch(() => {});
-    await message.channel.send(`<@${userId}> no spamming`).catch(() => {});
+    const warn = await message.channel.send(`<@${userId}> no spamming`).catch(() => null);
+    if (warn) setTimeout(() => warn.delete().catch(() => {}), 4000);
     return true;
   }
 
@@ -504,7 +508,30 @@ async function handleAntiSpam(message) {
     }
 
     spamTracker.set(userId, []);
-    await message.channel.send(`<@${userId}> no spamming`).catch(() => {});
+
+    // Track ping warnings and timeout if 3 within 20 seconds
+    const PING_WINDOW = 20000;
+    const PING_LIMIT = 3;
+    if (!pingWarnTracker.has(userId)) pingWarnTracker.set(userId, []);
+    const pings = pingWarnTracker.get(userId);
+    pings.push(now);
+    const recentPings = pings.filter(t => now - t < PING_WINDOW);
+    pingWarnTracker.set(userId, recentPings);
+
+    if (recentPings.length >= PING_LIMIT) {
+      pingWarnTracker.set(userId, []);
+      try {
+        const member = await message.guild.members.fetch(userId).catch(() => null);
+        if (member) {
+          await member.timeout(60 * 1000, 'Repeated spamming').catch(e => console.error('Failed to timeout:', e));
+        }
+      } catch (e) {
+        console.error('Timeout error:', e);
+      }
+    }
+
+    const warn = await message.channel.send(`<@${userId}> no spamming`).catch(() => null);
+    if (warn) setTimeout(() => warn.delete().catch(() => {}), 4000);
     return true;
   }
 
