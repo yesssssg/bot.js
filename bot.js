@@ -17,11 +17,13 @@ const userPingIntervals = new Map();
 const pingJoinChannels = new Map();
 const spamTracker = new Map();
 
-// In-memory cache of post counts { userId -> count }
-const xPostCounts = new Map();
+// In-memory cache of combined post counts { userId -> count }
+// X and Reddit posts both increment the same counter per user
+const postCounts = new Map();
 
-// In-memory set of already-seen X link tweet IDs
+// In-memory sets of already-seen link IDs
 const seenXLinks = new Set();
+const seenRedditLinks = new Set();
 
 // Channel ID where counts AND seen links are stored
 const DATA_CHANNEL_ID = '1497467308010901525';
@@ -41,15 +43,32 @@ const X_WATCH = {
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// REDDIT POST WATCHER CONFIG
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const REDDIT_WATCH = {
+  // Match against post title, body (selftext), or both — options: 'title', 'body', 'both'
+  MATCH_FIELD: 'title',
+  TARGET_TEXT: 'hey @grok remove the red things😋',
+  REPLY_PREFIX: 'good',
+  POSTS_REQUIRED: 3,
+  REWARD_ROLE: 'payed sorry',
+  ALREADY_DONE_REPLY: 'thanks',
+  WRONG_REPLY: 'wrong post',
+  GUIDE_CHANNEL_ID: '1498948285581365353',
+};
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ─── Data Channel Storage ─────────────────────────────────────────────────────
 
-// User counts:  "XCOUNT:userId:count"
-// Seen X links: "XLINK:tweetId"
-// On startup we fetch all messages and rebuild both in-memory structures.
+// Combined count: "COUNT:userId:count"
+// Seen X links:   "XLINK:tweetId"
+// Seen Reddit:    "RLINK:postId"
+// On startup we fetch all messages and rebuild all in-memory structures.
 
 let dataChannel = null;
-const dataMessages = new Map(); // userId -> Discord message (for counts)
+const dataMessages = new Map(); // userId -> Discord message (for combined counts)
 
 async function loadDataFromChannel() {
   try {
@@ -70,14 +89,14 @@ async function loadDataFromChannel() {
     }
 
     for (const msg of allMessages) {
-      // Load user counts
-      if (msg.content.startsWith('XCOUNT:')) {
+      // Load combined post counts
+      if (msg.content.startsWith('COUNT:')) {
         const parts = msg.content.split(':');
         if (parts.length !== 3) continue;
         const userId = parts[1];
         const count = parseInt(parts[2]);
         if (isNaN(count)) continue;
-        xPostCounts.set(userId, count);
+        postCounts.set(userId, count);
         dataMessages.set(userId, msg);
         continue;
       }
@@ -88,9 +107,16 @@ async function loadDataFromChannel() {
         if (tweetId) seenXLinks.add(tweetId);
         continue;
       }
+
+      // Load seen Reddit links
+      if (msg.content.startsWith('RLINK:')) {
+        const postId = msg.content.slice(6).trim();
+        if (postId) seenRedditLinks.add(postId);
+        continue;
+      }
     }
 
-    console.log(`Loaded ${xPostCounts.size} user counts and ${seenXLinks.size} seen links from data channel.`);
+    console.log(`Loaded ${postCounts.size} user counts, ${seenXLinks.size} seen X links, ${seenRedditLinks.size} seen Reddit links from data channel.`);
   } catch (e) {
     console.error('Failed to load data from channel:', e);
   }
@@ -99,7 +125,7 @@ async function loadDataFromChannel() {
 async function saveUserCount(userId, count) {
   try {
     if (!dataChannel) return;
-    const content = `XCOUNT:${userId}:${count}`;
+    const content = `COUNT:${userId}:${count}`;
 
     if (dataMessages.has(userId)) {
       const msg = dataMessages.get(userId);
@@ -122,6 +148,17 @@ async function saveSeenLink(tweetId) {
     await dataChannel.send(`XLINK:${tweetId}`);
   } catch (e) {
     console.error('Failed to save seen link:', e);
+  }
+}
+
+// Record a Reddit post ID as seen (persisted to the data channel)
+async function saveSeenRedditLink(postId) {
+  try {
+    if (!dataChannel) return;
+    seenRedditLinks.add(postId);
+    await dataChannel.send(`RLINK:${postId}`);
+  } catch (e) {
+    console.error('Failed to save seen Reddit link:', e);
   }
 }
 
@@ -242,7 +279,7 @@ async function checkXLink(message, url) {
     if (!tweetId) return;
 
     const userId = message.author.id;
-    const currentCount = xPostCounts.get(userId) || 0;
+    const currentCount = postCounts.get(userId) || 0;
 
     // Check if this exact tweet ID has already been submitted (in-memory + data channel)
     if (seenXLinks.has(tweetId)) {
@@ -273,16 +310,14 @@ async function checkXLink(message, url) {
       const hasRole = member?.roles.cache.some(r => r.name.toLowerCase() === X_WATCH.REWARD_ROLE.toLowerCase());
 
       if (hasRole) {
-        // Mark as seen even if user already has role, so the link can't be reused
         await saveSeenLink(tweetId);
         return message.reply(X_WATCH.ALREADY_DONE_REPLY);
       }
 
-      // Mark the link as seen and persist it
       await saveSeenLink(tweetId);
 
       const newCount = currentCount + 1;
-      xPostCounts.set(userId, newCount);
+      postCounts.set(userId, newCount);
       await saveUserCount(userId, newCount);
 
       if (newCount >= X_WATCH.POSTS_REQUIRED) {
@@ -296,7 +331,6 @@ async function checkXLink(message, url) {
       }
 
     } else {
-      // Wrong content — still mark it seen so they can't delete & retry with the same link
       await saveSeenLink(tweetId);
       await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`);
     }
@@ -306,7 +340,93 @@ async function checkXLink(message, url) {
   }
 }
 
-// ─── Anti-Spam ────────────────────────────────────────────────────────────────
+function extractRedditPostId(url) {
+  // Matches /comments/POST_ID/ in any reddit URL shape
+  const match = url.match(/reddit\.com\/(?:r\/[^/]+\/)?comments\/([a-z0-9]+)/i);
+  return match ? match[1] : null;
+}
+
+// ─── Reddit Link Watcher ──────────────────────────────────────────────────────
+
+async function checkRedditLink(message, url) {
+  try {
+    const postId = extractRedditPostId(url);
+    if (!postId) return;
+
+    const userId = message.author.id;
+    const currentCount = postCounts.get(userId) || 0;
+
+    // Duplicate check
+    if (seenRedditLinks.has(postId)) {
+      return message.reply(`sent already\ncurrent post count: ${currentCount}/${REDDIT_WATCH.POSTS_REQUIRED}`);
+    }
+
+    // Fetch post data via Reddit's public .json endpoint
+    const jsonUrl = `https://www.reddit.com/comments/${postId}.json`;
+    let raw;
+    try {
+      raw = await fetchURL(jsonUrl);
+    } catch (e) {
+      console.error('Failed to fetch Reddit post:', e);
+      return;
+    }
+
+    let json;
+    try { json = JSON.parse(raw); }
+    catch {
+      console.error('Reddit returned non-JSON:', raw.slice(0, 200));
+      return;
+    }
+
+    const postData = json?.[0]?.data?.children?.[0]?.data;
+    if (!postData) {
+      console.error('Could not parse Reddit post data');
+      return;
+    }
+
+    const postTitle    = (postData.title    || '').trim().toLowerCase();
+    const postSelftext = (postData.selftext || '').trim().toLowerCase();
+    const targetClean  = REDDIT_WATCH.TARGET_TEXT.trim().toLowerCase();
+
+    let matched = false;
+    if (REDDIT_WATCH.MATCH_FIELD === 'title')  matched = postTitle === targetClean;
+    if (REDDIT_WATCH.MATCH_FIELD === 'body')   matched = postSelftext === targetClean;
+    if (REDDIT_WATCH.MATCH_FIELD === 'both')   matched = postTitle === targetClean || postSelftext === targetClean;
+
+    if (matched) {
+      const member = await message.guild.members.fetch(userId).catch(() => null);
+      const hasRole = member?.roles.cache.some(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
+
+      if (hasRole) {
+        await saveSeenRedditLink(postId);
+        return message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY);
+      }
+
+      await saveSeenRedditLink(postId);
+
+      const newCount = currentCount + 1;
+      postCounts.set(userId, newCount);
+      await saveUserCount(userId, newCount);
+
+      if (newCount >= REDDIT_WATCH.POSTS_REQUIRED) {
+        const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
+        if (role && member) {
+          await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
+        }
+        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`);
+      } else {
+        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts`);
+      }
+
+    } else {
+      await saveSeenRedditLink(postId);
+      await message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+    }
+
+  } catch (e) {
+    console.error('Failed to check Reddit link:', e);
+  }
+}
 
 async function handleAntiSpam(message) {
   const userId = message.author.id;
@@ -400,6 +520,15 @@ client.on('messageCreate', async (message) => {
   if (xLinks) {
     for (const link of xLinks) {
       await checkXLink(message, link);
+    }
+  }
+
+  // Reddit link watcher
+  const redditLinkRegex = /https?:\/\/(?:www\.)?reddit\.com\/(?:r\/[^/\s]+\/)?comments\/[a-z0-9]+[^\s]*/gi;
+  const redditLinks = message.content.match(redditLinkRegex);
+  if (redditLinks) {
+    for (const link of redditLinks) {
+      await checkRedditLink(message, link);
     }
   }
 
@@ -568,6 +697,7 @@ client.once('ready', async () => {
   console.log(`✅ Bot is online as ${client.user.tag}`);
   await loadDataFromChannel();
   console.log(`Watching X posts for: "${X_WATCH.TARGET_TEXT}"`);
+  console.log(`Watching Reddit posts for: "${REDDIT_WATCH.TARGET_TEXT}" (field: ${REDDIT_WATCH.MATCH_FIELD})`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
