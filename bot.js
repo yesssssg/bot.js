@@ -254,6 +254,31 @@ function fetchURL(url) {
   });
 }
 
+// Reddit requires a descriptive User-Agent or it returns 429
+function fetchRedditURL(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, {
+      headers: {
+        'User-Agent': 'discord-bot:post-verifier:v1.0 (by /u/FlimsyBadger3576)',
+        'Accept': 'application/json'
+      }
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchRedditURL(res.headers.location).then(resolve).catch(reject);
+      }
+      if (res.statusCode === 429) {
+        return reject(new Error('Reddit rate limited (429)'));
+      }
+      if (res.statusCode !== 200) {
+        return reject(new Error(`Reddit returned status ${res.statusCode}`));
+      }
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+    }).on('error', reject);
+  });
+}
+
 function extractTweetId(url) {
   const match = url.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
   return match ? match[1] : null;
@@ -351,7 +376,9 @@ function extractRedditPostId(url) {
 async function checkRedditLink(message, url) {
   try {
     const postId = extractRedditPostId(url);
-    if (!postId) return;
+    if (!postId) {
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+    }
 
     const userId = message.author.id;
     const currentCount = postCounts.get(userId) || 0;
@@ -365,23 +392,23 @@ async function checkRedditLink(message, url) {
     const jsonUrl = `https://www.reddit.com/comments/${postId}.json`;
     let raw;
     try {
-      raw = await fetchURL(jsonUrl);
+      raw = await fetchRedditURL(jsonUrl);
     } catch (e) {
       console.error('Failed to fetch Reddit post:', e);
-      return;
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
     }
 
     let json;
     try { json = JSON.parse(raw); }
     catch {
       console.error('Reddit returned non-JSON:', raw.slice(0, 200));
-      return;
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
     }
 
     const postData = json?.[0]?.data?.children?.[0]?.data;
     if (!postData) {
       console.error('Could not parse Reddit post data');
-      return;
+      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
     }
 
     const postTitle    = (postData.title    || '').trim().toLowerCase();
