@@ -48,7 +48,7 @@ const X_WATCH = {
 
 const REDDIT_WATCH = {
   // Match against post title, body (selftext), or both — options: 'title', 'body', 'both'
-  MATCH_FIELD: 'title',
+  MATCH_FIELD: 'both',
   TARGET_TEXT: 'hey @grok remove the red things😋',
   REPLY_PREFIX: 'good',
   POSTS_REQUIRED: 3,
@@ -415,10 +415,19 @@ async function checkRedditLink(message, url) {
     const postSelftext = (postData.selftext || '').trim().toLowerCase();
     const targetClean  = REDDIT_WATCH.TARGET_TEXT.trim().toLowerCase();
 
+    // Log what we got vs what we expect to help debug mismatches
+    console.log(`Reddit post title: "${postTitle}"`);
+    console.log(`Reddit post body:  "${postSelftext.slice(0, 100)}"`);
+    console.log(`Target text:       "${targetClean}"`);
+
+    // Use includes() in addition to === to handle minor whitespace/encoding differences
+    const titleMatch    = postTitle.includes(targetClean) || postTitle === targetClean;
+    const selftextMatch = postSelftext.includes(targetClean) || postSelftext === targetClean;
+
     let matched = false;
-    if (REDDIT_WATCH.MATCH_FIELD === 'title')  matched = postTitle === targetClean;
-    if (REDDIT_WATCH.MATCH_FIELD === 'body')   matched = postSelftext === targetClean;
-    if (REDDIT_WATCH.MATCH_FIELD === 'both')   matched = postTitle === targetClean || postSelftext === targetClean;
+    if (REDDIT_WATCH.MATCH_FIELD === 'title')  matched = titleMatch;
+    if (REDDIT_WATCH.MATCH_FIELD === 'body')   matched = selftextMatch;
+    if (REDDIT_WATCH.MATCH_FIELD === 'both')   matched = titleMatch || selftextMatch;
 
     if (matched) {
       const member = await message.guild.members.fetch(userId).catch(() => null);
