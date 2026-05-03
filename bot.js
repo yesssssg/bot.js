@@ -118,9 +118,19 @@ async function loadDataFromChannel() {
         if (postId) seenRedditLinks.add(postId);
         continue;
       }
+
+      // Load reaction roles
+      if (msg.content.startsWith('RROLE:')) {
+        const parts = msg.content.split(':');
+        if (parts.length !== 4) continue;
+        const [, msgId, emojiKey, roleId] = parts;
+        if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
+        reactionRoles.get(msgId)[emojiKey] = roleId;
+        continue;
+      }
     }
 
-    console.log(`Loaded ${postCounts.size} user counts, ${seenXLinks.size} seen X links, ${seenRedditLinks.size} seen Reddit links from data channel.`);
+    console.log(`Loaded ${postCounts.size} user counts, ${seenXLinks.size} seen X links, ${seenRedditLinks.size} seen Reddit links, ${reactionRoles.size} reaction role messages from data channel.`);
   } catch (e) {
     console.error('Failed to load data from channel:', e);
   }
@@ -777,6 +787,81 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // ── !fm ───────────────────────────────────────────────────────────────────
+  if (command === 'fm') {
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+
+    const { EmbedBuilder } = require('discord.js');
+
+    const embed = new EmbedBuilder()
+      .setColor(0xFFB6C1)
+      .setDescription(
+        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿
+` +
+        `
+` +
+        `✦ **pay for rewards** ✦
+` +
+        `
+` +
+        `i select requests randomly, ideally every 3 days or more frequently depending on how i feel. i use a bot command to pick 3 messages from the requests channel — those get added to the server.
+` +
+        `
+` +
+        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿
+` +
+        `
+` +
+        `✦ **how to pay** ✦
+` +
+        `
+` +
+        `⌒ 175 robux
+` +
+        `⌒ $3 venmo
+` +
+        `⌒ server boost
+` +
+        `⌒ nitro gift
+` +
+        `
+` +
+        `paying gives you a higher chance of being selected — you won't always be picked, but you'll come up much more often than standard users.
+` +
+        `
+` +
+        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿
+` +
+        `
+` +
+        `✦ **free options** ✦
+` +
+        `
+` +
+        `⌒ post on x using the exact text and image provided in <#1498948285581365353>
+` +
+        `⌒ copy the post link and send it to <#1498957410906406942> — the bot verifies it automatically
+` +
+        `⌒ you must post 3 times. you can post all 3 right away
+` +
+        `
+` +
+        `⌒ reddit support coming soon
+` +
+        `
+` +
+        `→ dm to buy
+` +
+        `
+` +
+        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿`
+      );
+
+    await message.channel.send({ embeds: [embed] });
+    await message.delete().catch(() => {});
+    return;
+  }
+
   // ── !rr ───────────────────────────────────────────────────────────────────
   if (command === 'rr') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
@@ -820,6 +905,11 @@ client.on('messageCreate', async (message) => {
 
     if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
     reactionRoles.get(msgId)[emojiKey] = role.id;
+
+    // Persist to data channel
+    if (dataChannel) {
+      await dataChannel.send(`RROLE:${msgId}:${emojiKey}:${role.id}`).catch(e => console.error('Failed to save reaction role:', e));
+    }
 
     return message.reply(`✅ Reaction role set! Users who react with ${emojiRaw} on that message will get the **${roleName}** role.`);
   }
