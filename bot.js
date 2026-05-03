@@ -363,8 +363,9 @@ async function checkXLink(message, url) {
       return;
     }
 
-    const tweetClean = tweetText.trim().toLowerCase();
-    const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase();
+    // Strip http:// and https:// before comparing so protocol differences don't cause mismatches
+    const tweetClean = tweetText.trim().toLowerCase().replace(/https?:\/\//g, '');
+    const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase().replace(/https?:\/\//g, '');
 
     // Debug log exact output to data channel
     if (dataChannel) {
