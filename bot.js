@@ -792,9 +792,9 @@ client.on('messageCreate', async (message) => {
     // Strip colons from :emoji: format
     const emojiClean = emojiRaw.replace(/:/g, '');
 
-    // Find the role
-    const role = message.guild.roles.cache.find(r => r.name === roleName);
-    if (!role) return message.reply(`❌ Could not find a role named "${roleName}".`);
+    // Use role ID directly
+    const role = message.guild.roles.cache.get(roleName);
+    if (!role) return message.reply(`❌ Could not find a role with ID "${roleName}".`);
 
     // Fetch the target message from the current channel
     let targetMsg;
