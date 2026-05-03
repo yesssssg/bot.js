@@ -557,9 +557,9 @@ async function handleAntiSpam(message) {
 function containsInviteLink(content) {
   const lower = content.toLowerCase();
   return (
-    lower.includes('discord.gg') ||
-    lower.includes('discord.com/inv') ||
-    lower.includes('discordapp.')
+    lower.includes('discord.gg/') ||
+    lower.includes('discord.com/invite/') ||
+    lower.includes('discordapp.com')
   );
 }
 
