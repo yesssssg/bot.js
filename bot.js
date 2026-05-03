@@ -7,6 +7,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessageReactions,
   ],
 });
 
@@ -16,6 +17,9 @@ const everyonePingIntervals = new Map();
 const userPingIntervals = new Map();
 const pingJoinChannels = new Map();
 const spamTracker = new Map();
+
+// Reaction roles: { messageId -> { emoji -> roleName } }
+const reactionRoles = new Map();
 
 // In-memory cache of combined post counts { userId -> count }
 // X and Reddit posts both increment the same counter per user
@@ -772,6 +776,47 @@ client.on('messageCreate', async (message) => {
       message.channel.send('❌ Failed to delete messages. Make sure messages are not older than 14 days.').catch(() => {});
     }
   }
+
+  // ── !rr ───────────────────────────────────────────────────────────────────
+  if (command === 'rr') {
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+
+    const msgId    = args[0];
+    const emojiRaw = args[1];
+    const roleName = args.slice(2).join(' ');
+
+    if (!msgId || !emojiRaw || !roleName) {
+      return message.reply('Usage: `!rr <message id> <emoji> <role name>`');
+    }
+
+    // Strip colons from :emoji: format and resolve to actual emoji
+    const emojiClean = emojiRaw.replace(/:/g, '');
+
+    // Find the role
+    const role = message.guild.roles.cache.find(r => r.name === roleName);
+    if (!role) return message.reply(`❌ Could not find a role named "${roleName}".`);
+
+    // Fetch the target message from the current channel
+    let targetMsg;
+    try {
+      targetMsg = await message.channel.messages.fetch(msgId);
+    } catch {
+      return message.reply('❌ Could not find that message in this channel.');
+    }
+
+    // React to the message
+    try {
+      await targetMsg.react(emojiClean);
+    } catch {
+      return message.reply(`❌ Could not react with that emoji. Make sure it's a valid emoji the bot can use.`);
+    }
+
+    // Store the mapping
+    if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
+    reactionRoles.get(msgId)[emojiClean] = role.id;
+
+    return message.reply(`✅ Reaction role set! Users who react with ${emojiRaw} on that message will get the **${roleName}** role.`);
+  }
 });
 
 // ─── Ready ────────────────────────────────────────────────────────────────────
@@ -781,6 +826,60 @@ client.once('ready', async () => {
   await loadDataFromChannel();
   console.log(`Watching X posts for: "${X_WATCH.TARGET_TEXT}"`);
   console.log(`Watching Reddit posts for: "${REDDIT_WATCH.TARGET_TEXT}" (field: ${REDDIT_WATCH.MATCH_FIELD})`);
+});
+
+// ─── Reaction Role Listeners ─────────────────────────────────────────────────
+
+client.on('messageReactionAdd', async (reaction, user) => {
+  if (user.bot) return;
+
+  // Fetch partial reaction/message if needed
+  if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
+
+  const msgId = reaction.message.id;
+  if (!reactionRoles.has(msgId)) return;
+
+  const emojiKey = reaction.emoji.id
+    ? `${reaction.emoji.name}:${reaction.emoji.id}` // custom emoji
+    : reaction.emoji.name;                            // unicode emoji
+
+  // Try both the raw emoji and just the name for custom emojis
+  const mapping = reactionRoles.get(msgId);
+  const roleId  = mapping[emojiKey] || mapping[reaction.emoji.name];
+  if (!roleId) return;
+
+  try {
+    const guild  = reaction.message.guild;
+    const member = await guild.members.fetch(user.id).catch(() => null);
+    if (member) await member.roles.add(roleId).catch(e => console.error('Failed to add reaction role:', e));
+  } catch (e) {
+    console.error('Reaction role add error:', e);
+  }
+});
+
+client.on('messageReactionRemove', async (reaction, user) => {
+  if (user.bot) return;
+
+  if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
+
+  const msgId = reaction.message.id;
+  if (!reactionRoles.has(msgId)) return;
+
+  const emojiKey = reaction.emoji.id
+    ? `${reaction.emoji.name}:${reaction.emoji.id}`
+    : reaction.emoji.name;
+
+  const mapping = reactionRoles.get(msgId);
+  const roleId  = mapping[emojiKey] || mapping[reaction.emoji.name];
+  if (!roleId) return;
+
+  try {
+    const guild  = reaction.message.guild;
+    const member = await guild.members.fetch(user.id).catch(() => null);
+    if (member) await member.roles.remove(roleId).catch(e => console.error('Failed to remove reaction role:', e));
+  } catch (e) {
+    console.error('Reaction role remove error:', e);
+  }
 });
 
 client.login(process.env.DISCORD_TOKEN);
