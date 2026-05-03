@@ -789,7 +789,7 @@ client.on('messageCreate', async (message) => {
       return message.reply('Usage: `!rr <message id> <emoji> <role name>`');
     }
 
-    // Strip colons from :emoji: format and resolve to actual emoji
+    // Strip colons from :emoji: format
     const emojiClean = emojiRaw.replace(/:/g, '');
 
     // Find the role
@@ -805,15 +805,21 @@ client.on('messageCreate', async (message) => {
     }
 
     // React to the message
+    let reactedEmoji;
     try {
-      await targetMsg.react(emojiClean);
+      const reaction = await targetMsg.react(emojiClean);
+      reactedEmoji = reaction.emoji;
     } catch {
       return message.reply(`❌ Could not react with that emoji. Make sure it's a valid emoji the bot can use.`);
     }
 
-    // Store the mapping
+    // Store using the same key format the listeners use
+    const emojiKey = reactedEmoji.id
+      ? `${reactedEmoji.name}:${reactedEmoji.id}`
+      : reactedEmoji.name;
+
     if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
-    reactionRoles.get(msgId)[emojiClean] = role.id;
+    reactionRoles.get(msgId)[emojiKey] = role.id;
 
     return message.reply(`✅ Reaction role set! Users who react with ${emojiRaw} on that message will get the **${roleName}** role.`);
   }
