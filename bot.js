@@ -594,20 +594,23 @@ client.on('messageCreate', async (message) => {
   // Ignore messages in the data channel
   if (message.channel.id === DATA_CHANNEL_ID) return;
 
+  // Never delete or filter messages from admins
+  const isAdmin = message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
+
   // Invite link filter
-  if (containsInviteLink(message.content)) {
+  if (!isAdmin && containsInviteLink(message.content)) {
     await message.delete().catch(() => {});
     return;
   }
 
   // Anti-spam (includes format spam check)
-  const wasSpam = await handleAntiSpam(message);
+  const wasSpam = !isAdmin && await handleAntiSpam(message);
   if (wasSpam) return;
 
   // Auto-delete messages containing any URL after 2 minutes (only in the link channel)
   const LINK_CHANNEL_ID = '1498957410906406942';
   const anyLinkRegex = /https?:\/\//i;
-  if (message.channel.id === LINK_CHANNEL_ID && anyLinkRegex.test(message.content)) {
+  if (!isAdmin && message.channel.id === LINK_CHANNEL_ID && anyLinkRegex.test(message.content)) {
     deleteAfter(message, LINK_DELETE_MS);
   }
 
