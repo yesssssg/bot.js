@@ -839,27 +839,46 @@ client.once('ready', async () => {
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot) return;
 
+  const dbg = (msg) => dataChannel?.send(`[RR DEBUG] ${msg}`).catch(() => {});
+
   // Fetch partial reaction/message if needed
-  if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
+  if (reaction.partial) {
+    try { await reaction.fetch(); }
+    catch (e) { dbg(`Failed to fetch partial reaction: ${e}`); return; }
+  }
 
   const msgId = reaction.message.id;
-  if (!reactionRoles.has(msgId)) return;
+  dbg(`Reaction on msg ${msgId} | emoji name: ${reaction.emoji.name} | emoji id: ${reaction.emoji.id} | known messages: ${[...reactionRoles.keys()].join(', ') || 'none'}`);
+
+  if (!reactionRoles.has(msgId)) {
+    dbg(`No mapping found for message ${msgId}`);
+    return;
+  }
 
   const emojiKey = reaction.emoji.id
-    ? `${reaction.emoji.name}:${reaction.emoji.id}` // custom emoji
-    : reaction.emoji.name;                            // unicode emoji
+    ? `${reaction.emoji.name}:${reaction.emoji.id}`
+    : reaction.emoji.name;
 
-  // Try both the raw emoji and just the name for custom emojis
   const mapping = reactionRoles.get(msgId);
-  const roleId  = mapping[emojiKey] || mapping[reaction.emoji.name];
-  if (!roleId) return;
+  dbg(`Emoji key: "${emojiKey}" | mapping keys: ${Object.keys(mapping).join(', ')}`);
+
+  const roleId = mapping[emojiKey] || mapping[reaction.emoji.name];
+  if (!roleId) {
+    dbg(`No role found for emoji key "${emojiKey}"`);
+    return;
+  }
+
+  dbg(`Found role ID: ${roleId} — attempting to add to user ${user.id}`);
 
   try {
     const guild  = reaction.message.guild;
     const member = await guild.members.fetch(user.id).catch(() => null);
-    if (member) await member.roles.add(roleId).catch(e => console.error('Failed to add reaction role:', e));
+    if (!member) { dbg(`Could not fetch member ${user.id}`); return; }
+    await member.roles.add(roleId)
+      .then(() => dbg(`Successfully added role ${roleId} to ${user.id}`))
+      .catch(e => dbg(`Failed to add role: ${e}`));
   } catch (e) {
-    console.error('Reaction role add error:', e);
+    dbg(`Reaction role add error: ${e}`);
   }
 });
 
