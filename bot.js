@@ -126,6 +126,7 @@ async function loadDataFromChannel() {
         const [, msgId, emojiKey, roleId] = parts;
         if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
         reactionRoles.get(msgId)[emojiKey] = roleId;
+        reactionRoleMessages.set(`${msgId}:${emojiKey}`, msg);
         continue;
       }
     }
@@ -298,6 +299,27 @@ function extractTweetId(url) {
   return match ? match[1] : null;
 }
 
+// Overwrite all reaction roles in data channel as a single JSON message
+const reactionRoleMessages = new Map(); // msgId:emojiKey -> Discord message
+
+async function saveReactionRole(msgId, emojiKey, roleId) {
+  try {
+    if (!dataChannel) return;
+    const key = `${msgId}:${emojiKey}`;
+    const content = `RROLE:${msgId}:${emojiKey}:${roleId}`;
+    if (reactionRoleMessages.has(key)) {
+      const msg = reactionRoleMessages.get(key);
+      const updated = await msg.edit(content);
+      reactionRoleMessages.set(key, updated);
+    } else {
+      const newMsg = await dataChannel.send(content);
+      reactionRoleMessages.set(key, newMsg);
+    }
+  } catch (e) {
+    console.error('Failed to save reaction role:', e);
+  }
+}
+
 // ─── Format Spam Check ────────────────────────────────────────────────────────
 
 // Returns true if the message content violates formatting rules:
@@ -344,7 +366,17 @@ async function checkXLink(message, url) {
     const tweetClean = tweetText.trim().toLowerCase();
     const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase();
 
-    if (tweetClean === targetClean) {
+    // Debug log exact output to data channel
+    if (dataChannel) {
+      await dataChannel.send(
+        `[X DEBUG] user: <@${userId}>\n` +
+        `got:    "${tweetText}"\n` +
+        `target: "${X_WATCH.TARGET_TEXT}"\n` +
+        `match:  ${tweetClean === targetClean}`
+      ).catch(() => {});
+    }
+
+    if (tweetClean === targetClean || tweetClean.includes(targetClean)) {
       const member = await message.guild.members.fetch(userId).catch(() => null);
       const hasRole = member?.roles.cache.some(r => r.name.toLowerCase() === X_WATCH.REWARD_ROLE.toLowerCase());
 
@@ -919,10 +951,8 @@ client.on('messageCreate', async (message) => {
     if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
     reactionRoles.get(msgId)[emojiKey] = role.id;
 
-    // Persist to data channel
-    if (dataChannel) {
-      await dataChannel.send(`RROLE:${msgId}:${emojiKey}:${role.id}`).catch(e => console.error('Failed to save reaction role:', e));
-    }
+    // Persist to data channel (edits existing if already set, so survives restarts)
+    await saveReactionRole(msgId, emojiKey, role.id);
 
     return message.reply(`✅ Reaction role set! Users who react with ${emojiRaw} on that message will get the **${roleName}** role.`);
   }
