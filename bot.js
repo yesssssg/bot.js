@@ -862,6 +862,16 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ── !post ─────────────────────────────────────────────────────────────────
+  if (command === 'post') {
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    const text = args.join(' ');
+    if (!text) return message.reply('Usage: `!post <text>` — sets the target text for both X and Reddit verification.');
+    X_WATCH.TARGET_TEXT = text;
+    REDDIT_WATCH.TARGET_TEXT = text;
+    return message.reply(`✅ Target text updated to: **${text}**`);
+  }
+
   // ── !rr ───────────────────────────────────────────────────────────────────
   if (command === 'rr') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
