@@ -703,7 +703,7 @@ client.on('messageCreate', async (message) => {
       const cooldownMs = parseCooldown(cooldownStr);
       if (!cooldownMs) return message.reply('❌ Invalid cooldown.');
       if (everyonePingIntervals.has(message.channel.id)) clearInterval(everyonePingIntervals.get(message.channel.id).interval);
-      const interval = setInterval(async () => { try { await message.channel.send('@everyone'); } catch (e) { console.error(e); } }, cooldownMs);
+      const interval = setInterval(async () => { try { const p = await message.channel.send('@everyone'); p.delete().catch(() => {}); } catch (e) { console.error(e); } }, cooldownMs);
       everyonePingIntervals.set(message.channel.id, { interval, cooldownMs });
       return message.reply(`✅ Auto @everyone ping enabled every **${formatCooldown(cooldownMs)}**.`);
     }
