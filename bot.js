@@ -119,13 +119,13 @@ async function loadDataFromChannel() {
         continue;
       }
 
-      if (msg.content.startsWith('RROLE:')) {
-        const parts = msg.content.split(':');
-        if (parts.length !== 4) continue;
-        const [, msgId, emojiKey, roleId] = parts;
+      if (msg.content.startsWith('RROLE|')) {
+        const parts = msg.content.slice(6).split('|');
+        if (parts.length !== 3) continue;
+        const [msgId, emojiKey, roleId] = parts;
         if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
         reactionRoles.get(msgId)[emojiKey] = roleId;
-        reactionRoleMessages.set(`${msgId}:${emojiKey}`, msg);
+        reactionRoleMessages.set(msgId + '|' + emojiKey, msg);
         continue;
       }
 
@@ -203,8 +203,8 @@ async function saveSeenRedditLink(postId) {
 async function saveReactionRole(msgId, emojiKey, roleId) {
   try {
     if (!dataChannel) return;
-    const key = `${msgId}:${emojiKey}`;
-    const content = `RROLE:${msgId}:${emojiKey}:${roleId}`;
+    const key = msgId + '|' + emojiKey;
+    const content = 'RROLE|' + msgId + '|' + emojiKey + '|' + roleId;
     if (reactionRoleMessages.has(key)) {
       const msg = reactionRoleMessages.get(key);
       const updated = await msg.edit(content);
@@ -680,14 +680,9 @@ client.on('channelCreate', async (channel) => {
     const embed = new EmbedBuilder()
       .setColor(0xFF69B4)
       .setDescription(
-        `꩜ ────────────────── ꩜\n` +
-        `\n` +
-        `🤡  **new channel**\n` +
-        `\n` +
-        `${channelRef} was just added\n` +
-        `to **${channel.guild.name}**\n` +
-        `\n` +
-        `꩜ ────────────────── ꩜`
+        `✦ new channel added\n` +
+        `${channelRef}\n` +
+        `∙ ${channel.guild.name}`
       );
 
     await updatesChannel.send({ embeds: [embed] });
