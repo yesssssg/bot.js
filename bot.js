@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, PermissionsBitField, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
 const https = require('https');
 
 const client = new Client({
@@ -21,8 +21,12 @@ const spamTracker = new Map();
 // Reaction roles: { messageId -> { emoji -> roleName } }
 const reactionRoles = new Map();
 
+// Update subscriptions
+// updateSubMessage: { messageId, channelId, guildId, emojiKey }
+let updateSubMessage = null;
+const updateSubscribers = new Set(); // Set of userIds
+
 // In-memory cache of combined post counts { userId -> count }
-// X and Reddit posts both increment the same counter per user
 const postCounts = new Map();
 
 // In-memory sets of already-seen link IDs
@@ -51,7 +55,6 @@ const X_WATCH = {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const REDDIT_WATCH = {
-  // Match against post title, body (selftext), or both — options: 'title', 'body', 'both'
   MATCH_FIELD: 'both',
   TARGET_TEXT: 'hey @grok remove the red things😋',
   REPLY_PREFIX: 'good',
@@ -66,13 +69,13 @@ const REDDIT_WATCH = {
 
 // ─── Data Channel Storage ─────────────────────────────────────────────────────
 
-// Combined count: "COUNT:userId:count"
-// Seen X links:   "XLINK:tweetId"
-// Seen Reddit:    "RLINK:postId"
-// On startup we fetch all messages and rebuild all in-memory structures.
-
 let dataChannel = null;
-const dataMessages = new Map(); // userId -> Discord message (for combined counts)
+const dataMessages = new Map();
+const reactionRoleMessages = new Map();
+
+// Persistent message handles for update sub data
+let updateSubMsgHandle = null;        // the single UPMSG: record
+const updateSubUserHandles = new Map(); // userId -> discord message for UPSUB:
 
 async function loadDataFromChannel() {
   try {
@@ -93,7 +96,6 @@ async function loadDataFromChannel() {
     }
 
     for (const msg of allMessages) {
-      // Load combined post counts
       if (msg.content.startsWith('COUNT:')) {
         const parts = msg.content.split(':');
         if (parts.length !== 3) continue;
@@ -105,21 +107,18 @@ async function loadDataFromChannel() {
         continue;
       }
 
-      // Load seen X links
       if (msg.content.startsWith('XLINK:')) {
         const tweetId = msg.content.slice(6).trim();
         if (tweetId) seenXLinks.add(tweetId);
         continue;
       }
 
-      // Load seen Reddit links
       if (msg.content.startsWith('RLINK:')) {
         const postId = msg.content.slice(6).trim();
         if (postId) seenRedditLinks.add(postId);
         continue;
       }
 
-      // Load reaction roles
       if (msg.content.startsWith('RROLE:')) {
         const parts = msg.content.split(':');
         if (parts.length !== 4) continue;
@@ -129,9 +128,36 @@ async function loadDataFromChannel() {
         reactionRoleMessages.set(`${msgId}:${emojiKey}`, msg);
         continue;
       }
+
+      // UPMSG:messageId:channelId:guildId:emojiKey
+      if (msg.content.startsWith('UPMSG:')) {
+        const parts = msg.content.split(':');
+        // emojiKey may contain a colon (custom emoji name:id), so rejoin tail
+        if (parts.length >= 5) {
+          const [, messageId, channelId, guildId, ...emojiParts] = parts;
+          const emojiKey = emojiParts.join(':');
+          updateSubMessage = { messageId, channelId, guildId, emojiKey };
+          updateSubMsgHandle = msg;
+        }
+        continue;
+      }
+
+      // UPSUB:userId
+      if (msg.content.startsWith('UPSUB:')) {
+        const userId = msg.content.slice(6).trim();
+        if (userId) {
+          updateSubscribers.add(userId);
+          updateSubUserHandles.set(userId, msg);
+        }
+        continue;
+      }
     }
 
-    console.log(`Loaded ${postCounts.size} user counts, ${seenXLinks.size} seen X links, ${seenRedditLinks.size} seen Reddit links, ${reactionRoles.size} reaction role messages from data channel.`);
+    console.log(
+      `Loaded ${postCounts.size} user counts, ${seenXLinks.size} seen X links, ` +
+      `${seenRedditLinks.size} seen Reddit links, ${reactionRoles.size} reaction role messages, ` +
+      `${updateSubscribers.size} update subscribers from data channel.`
+    );
   } catch (e) {
     console.error('Failed to load data from channel:', e);
   }
@@ -141,7 +167,6 @@ async function saveUserCount(userId, count) {
   try {
     if (!dataChannel) return;
     const content = `COUNT:${userId}:${count}`;
-
     if (dataMessages.has(userId)) {
       const msg = dataMessages.get(userId);
       const updated = await msg.edit(content);
@@ -155,7 +180,6 @@ async function saveUserCount(userId, count) {
   }
 }
 
-// Record a tweet ID as seen (persisted to the data channel)
 async function saveSeenLink(tweetId) {
   try {
     if (!dataChannel) return;
@@ -166,7 +190,6 @@ async function saveSeenLink(tweetId) {
   }
 }
 
-// Record a Reddit post ID as seen (persisted to the data channel)
 async function saveSeenRedditLink(postId) {
   try {
     if (!dataChannel) return;
@@ -174,6 +197,67 @@ async function saveSeenRedditLink(postId) {
     await dataChannel.send(`RLINK:${postId}`);
   } catch (e) {
     console.error('Failed to save seen Reddit link:', e);
+  }
+}
+
+async function saveReactionRole(msgId, emojiKey, roleId) {
+  try {
+    if (!dataChannel) return;
+    const key = `${msgId}:${emojiKey}`;
+    const content = `RROLE:${msgId}:${emojiKey}:${roleId}`;
+    if (reactionRoleMessages.has(key)) {
+      const msg = reactionRoleMessages.get(key);
+      const updated = await msg.edit(content);
+      reactionRoleMessages.set(key, updated);
+    } else {
+      const newMsg = await dataChannel.send(content);
+      reactionRoleMessages.set(key, newMsg);
+    }
+  } catch (e) {
+    console.error('Failed to save reaction role:', e);
+  }
+}
+
+// ─── Update Sub Persistence ───────────────────────────────────────────────────
+
+async function saveUpdateSubMessage(messageId, channelId, guildId, emojiKey) {
+  try {
+    if (!dataChannel) return;
+    const content = `UPMSG:${messageId}:${channelId}:${guildId}:${emojiKey}`;
+    if (updateSubMsgHandle) {
+      const updated = await updateSubMsgHandle.edit(content);
+      updateSubMsgHandle = updated;
+    } else {
+      updateSubMsgHandle = await dataChannel.send(content);
+    }
+  } catch (e) {
+    console.error('Failed to save update sub message:', e);
+  }
+}
+
+async function addUpdateSubscriber(userId) {
+  try {
+    if (updateSubscribers.has(userId)) return;
+    updateSubscribers.add(userId);
+    if (!dataChannel) return;
+    const content = `UPSUB:${userId}`;
+    const newMsg = await dataChannel.send(content);
+    updateSubUserHandles.set(userId, newMsg);
+  } catch (e) {
+    console.error('Failed to add update subscriber:', e);
+  }
+}
+
+async function removeUpdateSubscriber(userId) {
+  try {
+    if (!updateSubscribers.has(userId)) return;
+    updateSubscribers.delete(userId);
+    if (updateSubUserHandles.has(userId)) {
+      await updateSubUserHandles.get(userId).delete().catch(() => {});
+      updateSubUserHandles.delete(userId);
+    }
+  } catch (e) {
+    console.error('Failed to remove update subscriber:', e);
   }
 }
 
@@ -269,7 +353,6 @@ function fetchURL(url) {
   });
 }
 
-// Reddit requires a descriptive User-Agent or it returns 429
 function fetchRedditURL(url) {
   return new Promise((resolve, reject) => {
     https.get(url, {
@@ -299,32 +382,8 @@ function extractTweetId(url) {
   return match ? match[1] : null;
 }
 
-// Overwrite all reaction roles in data channel as a single JSON message
-const reactionRoleMessages = new Map(); // msgId:emojiKey -> Discord message
-
-async function saveReactionRole(msgId, emojiKey, roleId) {
-  try {
-    if (!dataChannel) return;
-    const key = `${msgId}:${emojiKey}`;
-    const content = `RROLE:${msgId}:${emojiKey}:${roleId}`;
-    if (reactionRoleMessages.has(key)) {
-      const msg = reactionRoleMessages.get(key);
-      const updated = await msg.edit(content);
-      reactionRoleMessages.set(key, updated);
-    } else {
-      const newMsg = await dataChannel.send(content);
-      reactionRoleMessages.set(key, newMsg);
-    }
-  } catch (e) {
-    console.error('Failed to save reaction role:', e);
-  }
-}
-
 // ─── Format Spam Check ────────────────────────────────────────────────────────
 
-// Returns true if the message content violates formatting rules:
-//   - more than 3 newlines
-//   - any single character repeated 49 or more times consecutively
 function isFormatSpam(content) {
   const newlineCount = (content.match(/\n/g) || []).length;
   if (newlineCount > 3) return true;
@@ -342,7 +401,6 @@ async function checkXLink(message, url) {
     const userId = message.author.id;
     const currentCount = postCounts.get(userId) || 0;
 
-    // Check if this exact tweet ID has already been submitted (in-memory + data channel)
     if (seenXLinks.has(tweetId)) {
       return message.reply(`sent already\ncurrent post count: ${currentCount}/${X_WATCH.POSTS_REQUIRED}`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
@@ -363,11 +421,9 @@ async function checkXLink(message, url) {
       return;
     }
 
-    // Strip http:// and https:// before comparing so protocol differences don't cause mismatches
     const tweetClean = tweetText.trim().toLowerCase().replace(/https?:\/\//g, '');
     const targetClean = X_WATCH.TARGET_TEXT.trim().toLowerCase().replace(/https?:\/\//g, '');
 
-    // Debug log exact output to data channel
     if (dataChannel) {
       await dataChannel.send(
         `[X DEBUG] user: <@${userId}>\n` +
@@ -413,7 +469,6 @@ async function checkXLink(message, url) {
 }
 
 function extractRedditPostId(url) {
-  // Matches /comments/POST_ID/ in any reddit URL shape
   const match = url.match(/reddit\.com\/(?:r\/[^/]+\/)?comments\/([a-z0-9]+)/i);
   return match ? match[1] : null;
 }
@@ -430,18 +485,15 @@ async function checkRedditLink(message, url) {
     const userId = message.author.id;
     const currentCount = postCounts.get(userId) || 0;
 
-    // Duplicate check
     if (seenRedditLinks.has(postId)) {
       return message.reply(`sent already\ncurrent post count: ${currentCount}/${REDDIT_WATCH.POSTS_REQUIRED}`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
-    // Fetch post data via Reddit's public .json endpoint
     const jsonUrl = `https://www.reddit.com/comments/${postId}.json`;
     let raw;
     try {
       raw = await fetchRedditURL(jsonUrl);
     } catch (e) {
-      // Fetch failed — can't verify, so count it
       console.error('Failed to fetch Reddit post:', e);
       raw = null;
     }
@@ -453,7 +505,6 @@ async function checkRedditLink(message, url) {
       postData = json?.[0]?.data?.children?.[0]?.data || null;
     }
 
-    // If we couldn't fetch/parse at all, count it — we can't prove it's wrong
     if (!postData) {
       console.error('Could not read Reddit post data, counting anyway');
       const member2 = await message.guild.members.fetch(userId).catch(() => null);
@@ -482,13 +533,11 @@ async function checkRedditLink(message, url) {
     const selftextMatch = postSelftext.includes(targetClean) || postSelftext === targetClean;
     const canRead       = postTitle.length > 0 || postSelftext.length > 0;
 
-    // Only reject if we could actually read the post AND it clearly doesn't match
     if (canRead && !titleMatch && !selftextMatch) {
       await saveSeenRedditLink(postId);
       return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
-    // Matched or couldn't read — count it
     const member = await message.guild.members.fetch(userId).catch(() => null);
     const hasRole = member?.roles.cache.some(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
 
@@ -518,7 +567,6 @@ async function checkRedditLink(message, url) {
   }
 }
 
-// Tracks ping warnings per user for timeout escalation: { userId -> [timestamp, ...] }
 const pingWarnTracker = new Map();
 
 async function handleAntiSpam(message) {
@@ -527,7 +575,6 @@ async function handleAntiSpam(message) {
   const WINDOW = 5000;
   const LIMIT = 5;
 
-  // ── Format spam check (newlines / repeated characters) ──────────────────
   if (isFormatSpam(message.content)) {
     await message.delete().catch(() => {});
     const warn = await message.channel.send(`<@${userId}> no spamming`).catch(() => null);
@@ -535,7 +582,6 @@ async function handleAntiSpam(message) {
     return true;
   }
 
-  // ── Rapid-fire spam check ────────────────────────────────────────────────
   if (!spamTracker.has(userId)) spamTracker.set(userId, []);
   const timestamps = spamTracker.get(userId);
   timestamps.push({ time: now, messageId: message.id });
@@ -556,7 +602,6 @@ async function handleAntiSpam(message) {
 
     spamTracker.set(userId, []);
 
-    // Track ping warnings and timeout if 3 within 20 seconds
     const PING_WINDOW = 20000;
     const PING_LIMIT = 3;
     if (!pingWarnTracker.has(userId)) pingWarnTracker.set(userId, []);
@@ -597,9 +642,8 @@ function containsInviteLink(content) {
 }
 
 const PREFIX = '!';
-const LINK_DELETE_MS = 2 * 60 * 1000; // 2 minutes
+const LINK_DELETE_MS = 2 * 60 * 1000;
 
-// Delete a message after a delay, silently
 function deleteAfter(msg, ms) {
   setTimeout(() => msg.delete().catch(() => {}), ms);
 }
@@ -619,35 +663,58 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
+// ─── Channel Create → DM Subscribers ────────────────────────────────────────
+
+client.on('channelCreate', async (channel) => {
+  if (updateSubscribers.size === 0) return;
+
+  // Only notify for text/voice/category channels in a guild
+  if (!channel.guild) return;
+
+  const channelMention = channel.type === ChannelType.GuildText
+    ? `#${channel.name}`
+    : channel.name;
+
+  for (const userId of updateSubscribers) {
+    try {
+      const user = await client.users.fetch(userId).catch(() => null);
+      if (!user) continue;
+      await user.send(
+        `✦ **new channel added** ✦\n` +
+        `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
+        `${channelMention} was just added to **${channel.guild.name}**`
+      ).catch(() => {
+        // DMs closed — silently skip, don't remove from list
+      });
+    } catch (e) {
+      console.error(`Failed to DM subscriber ${userId}:`, e);
+    }
+  }
+});
+
 // ─── Message Handler ──────────────────────────────────────────────────────────
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // Ignore messages in the data channel
   if (message.channel.id === DATA_CHANNEL_ID) return;
 
-  // Never delete or filter messages from admins
   const isAdmin = message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
 
-  // Invite link filter
   if (!isAdmin && containsInviteLink(message.content)) {
     await message.delete().catch(() => {});
     return;
   }
 
-  // Anti-spam (includes format spam check)
   const wasSpam = !isAdmin && await handleAntiSpam(message);
   if (wasSpam) return;
 
-  // Auto-delete messages containing any URL after 2 minutes (only in the link channel)
   const LINK_CHANNEL_ID = '1498957410906406942';
   const anyLinkRegex = /https?:\/\//i;
   if (!isAdmin && message.channel.id === LINK_CHANNEL_ID && anyLinkRegex.test(message.content)) {
     deleteAfter(message, LINK_DELETE_MS);
   }
 
-  // X link watcher
   const xLinkRegex = /https?:\/\/(?:twitter\.com|x\.com)\/\w+\/status\/\d+[^\s]*/gi;
   const xLinks = message.content.match(xLinkRegex);
   if (xLinks) {
@@ -656,7 +723,6 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // Reddit link watcher
   const redditLinkRegex = /https?:\/\/(?:www\.)?reddit\.com\/(?:r\/[^/\s]+\/)?comments\/[a-z0-9]+[^\s]*/gi;
   const redditLinks = message.content.match(redditLinkRegex);
   if (redditLinks) {
@@ -823,73 +889,100 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // ── !kick ─────────────────────────────────────────────────────────────────
+  if (command === 'kick') {
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.KickMembers)) return message.reply('❌ I need Kick Members permission.');
+
+    const userMention = args[0];
+    if (!userMention) return message.reply('Usage: `!kick @user [reason]`');
+
+    const userId = userMention.replace(/[<@!>]/g, '');
+    const reason = args.slice(1).join(' ') || 'No reason provided';
+
+    let member;
+    try {
+      member = await message.guild.members.fetch(userId);
+    } catch {
+      return message.reply('❌ Could not find that user.');
+    }
+
+    if (!member.kickable) return message.reply('❌ I cannot kick this user. They may have a higher role than me.');
+
+    try {
+      await member.kick(reason);
+      return message.reply(`✅ **${member.user.tag}** has been kicked. Reason: ${reason}`);
+    } catch (e) {
+      console.error('Failed to kick member:', e);
+      return message.reply('❌ Failed to kick that user.');
+    }
+  }
+
+  // ── !ban ──────────────────────────────────────────────────────────────────
+  if (command === 'ban') {
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('❌ I need Ban Members permission.');
+
+    const userMention = args[0];
+    if (!userMention) return message.reply('Usage: `!ban @user [reason]`');
+
+    const userId = userMention.replace(/[<@!>]/g, '');
+    const reason = args.slice(1).join(' ') || 'No reason provided';
+
+    let member;
+    try {
+      member = await message.guild.members.fetch(userId);
+    } catch {
+      return message.reply('❌ Could not find that user.');
+    }
+
+    if (!member.bannable) return message.reply('❌ I cannot ban this user. They may have a higher role than me.');
+
+    try {
+      await member.ban({ reason, deleteMessageSeconds: 0 });
+      return message.reply(`✅ **${member.user.tag}** has been banned. Reason: ${reason}`);
+    } catch (e) {
+      console.error('Failed to ban member:', e);
+      return message.reply('❌ Failed to ban that user.');
+    }
+  }
+
   // ── !fm ───────────────────────────────────────────────────────────────────
   if (command === 'fm') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
 
-    const { EmbedBuilder } = require('discord.js');
-
     const embed = new EmbedBuilder()
       .setColor(0xFFB6C1)
       .setDescription(
-        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿
-` +
-        `
-` +
-        `✦ **pay for rewards** ✦
-` +
-        `
-` +
-        `i select requests randomly, ideally every 3 days or more frequently depending on how i feel. i use a bot command to pick 3 messages from the requests channel — those get added to the server.
-` +
-        `
-` +
-        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿
-` +
-        `
-` +
-        `✦ **how to pay** ✦
-` +
-        `
-` +
-        `⌒ 175 robux
-` +
-        `⌒ $3 venmo
-` +
-        `⌒ server boost
-` +
-        `⌒ nitro gift
-` +
-        `
-` +
-        `paying gives you a higher chance of being selected — you won't always be picked, but you'll come up much more often than standard users.
-` +
-        `
-` +
-        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿
-` +
-        `
-` +
-        `✦ **free options** ✦
-` +
-        `
-` +
-        `⌒ post on x using the exact text and image provided in <#1498948285581365353>
-` +
-        `⌒ copy the post link and send it to <#1498957410906406942> — the bot verifies it automatically
-` +
-        `⌒ you must post 3 times. you can post all 3 right away
-` +
-        `
-` +
-        `⌒ reddit support coming soon
-` +
-        `
-` +
-        `→ dm to buy
-` +
-        `
-` +
+        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿\n` +
+        `\n` +
+        `✦ **pay for rewards** ✦\n` +
+        `\n` +
+        `i select requests randomly, ideally every 3 days or more frequently depending on how i feel. i use a bot command to pick 3 messages from the requests channel — those get added to the server.\n` +
+        `\n` +
+        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿\n` +
+        `\n` +
+        `✦ **how to pay** ✦\n` +
+        `\n` +
+        `⌒ 175 robux\n` +
+        `⌒ $3 venmo\n` +
+        `⌒ server boost\n` +
+        `⌒ nitro gift\n` +
+        `\n` +
+        `paying gives you a higher chance of being selected — you won't always be picked, but you'll come up much more often than standard users.\n` +
+        `\n` +
+        `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿\n` +
+        `\n` +
+        `✦ **free options** ✦\n` +
+        `\n` +
+        `⌒ post on x using the exact text and image provided in <#1498948285581365353>\n` +
+        `⌒ copy the post link and send it to <#1498957410906406942> — the bot verifies it automatically\n` +
+        `⌒ you must post 3 times. you can post all 3 right away\n` +
+        `\n` +
+        `⌒ reddit support coming soon\n` +
+        `\n` +
+        `→ dm to buy\n` +
+        `\n` +
         `∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿`
       );
 
@@ -920,14 +1013,10 @@ client.on('messageCreate', async (message) => {
       return message.reply('Usage: `!rr <message id> <emoji> <role name>`');
     }
 
-    // Strip colons from :emoji: format
     const emojiClean = emojiRaw.replace(/:/g, '');
+    const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
+    if (!role) return message.reply(`❌ Could not find a role named "${roleName}".`);
 
-    // Use role ID directly
-    const role = message.guild.roles.cache.get(roleName);
-    if (!role) return message.reply(`❌ Could not find a role with ID "${roleName}".`);
-
-    // Fetch the target message from the current channel
     let targetMsg;
     try {
       targetMsg = await message.channel.messages.fetch(msgId);
@@ -935,7 +1024,6 @@ client.on('messageCreate', async (message) => {
       return message.reply('❌ Could not find that message in this channel.');
     }
 
-    // React to the message
     let reactedEmoji;
     try {
       const reaction = await targetMsg.react(emojiClean);
@@ -944,7 +1032,6 @@ client.on('messageCreate', async (message) => {
       return message.reply(`❌ Could not react with that emoji. Make sure it's a valid emoji the bot can use.`);
     }
 
-    // Store using the same key format the listeners use
     const emojiKey = reactedEmoji.id
       ? `${reactedEmoji.name}:${reactedEmoji.id}`
       : reactedEmoji.name;
@@ -952,10 +1039,64 @@ client.on('messageCreate', async (message) => {
     if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
     reactionRoles.get(msgId)[emojiKey] = role.id;
 
-    // Persist to data channel (edits existing if already set, so survives restarts)
     await saveReactionRole(msgId, emojiKey, role.id);
 
     return message.reply(`✅ Reaction role set! Users who react with ${emojiRaw} on that message will get the **${roleName}** role.`);
+  }
+
+  // ── !updateset ────────────────────────────────────────────────────────────
+  if (command === 'updateset') {
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+
+    // Build and send the embed
+    const embed = new EmbedBuilder()
+      .setColor(0xFF69B4) // bright pink
+      .setDescription(
+        `꩜ ────────────────── ꩜\n` +
+        `\n` +
+        `🤡  **server updates**\n` +
+        `\n` +
+        `react below to receive a dm whenever\n` +
+        `a new channel is added to the server\n` +
+        `\n` +
+        `✦ make sure your dms are open ✦\n` +
+        `\n` +
+        `unreact at any time to opt out\n` +
+        `\n` +
+        `꩜ ────────────────── ꩜`
+      );
+
+    await message.delete().catch(() => {});
+
+    const sent = await message.channel.send({ embeds: [embed] });
+
+    // Bot reacts with clown
+    const CLOWN = '🤡';
+    let reactedEmoji;
+    try {
+      const reaction = await sent.react(CLOWN);
+      reactedEmoji = reaction.emoji;
+    } catch (e) {
+      console.error('Failed to react with clown emoji:', e);
+      return;
+    }
+
+    const emojiKey = reactedEmoji.id
+      ? `${reactedEmoji.name}:${reactedEmoji.id}`
+      : reactedEmoji.name;
+
+    // Store in memory
+    updateSubMessage = {
+      messageId: sent.id,
+      channelId:  message.channel.id,
+      guildId:    message.guild.id,
+      emojiKey,
+    };
+
+    // Persist to data channel
+    await saveUpdateSubMessage(sent.id, message.channel.id, message.guild.id, emojiKey);
+
+    return;
   }
 });
 
@@ -966,22 +1107,38 @@ client.once('ready', async () => {
   await loadDataFromChannel();
   console.log(`Watching X posts for: "${X_WATCH.TARGET_TEXT}"`);
   console.log(`Watching Reddit posts for: "${REDDIT_WATCH.TARGET_TEXT}" (field: ${REDDIT_WATCH.MATCH_FIELD})`);
+  if (updateSubMessage) {
+    console.log(`Update sub message loaded: ${updateSubMessage.messageId} | emoji: ${updateSubMessage.emojiKey} | subscribers: ${updateSubscribers.size}`);
+  }
 });
 
-// ─── Reaction Role Listeners ─────────────────────────────────────────────────
+// ─── Reaction Role + Update Sub Listeners ────────────────────────────────────
 
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot) return;
 
   const dbg = (msg) => dataChannel?.send(`[RR DEBUG] ${msg}`).catch(() => {});
 
-  // Fetch partial reaction/message if needed
   if (reaction.partial) {
     try { await reaction.fetch(); }
     catch (e) { dbg(`Failed to fetch partial reaction: ${e}`); return; }
   }
 
   const msgId = reaction.message.id;
+
+  // ── Update subscription check ──
+  if (updateSubMessage && msgId === updateSubMessage.messageId) {
+    const emojiKey = reaction.emoji.id
+      ? `${reaction.emoji.name}:${reaction.emoji.id}`
+      : reaction.emoji.name;
+
+    if (emojiKey === updateSubMessage.emojiKey || reaction.emoji.name === updateSubMessage.emojiKey) {
+      await addUpdateSubscriber(user.id);
+    }
+    return; // don't fall through to reaction roles
+  }
+
+  // ── Reaction roles check ──
   dbg(`Reaction on msg ${msgId} | emoji name: ${reaction.emoji.name} | emoji id: ${reaction.emoji.id} | known messages: ${[...reactionRoles.keys()].join(', ') || 'none'}`);
 
   if (!reactionRoles.has(msgId)) {
@@ -1022,6 +1179,20 @@ client.on('messageReactionRemove', async (reaction, user) => {
   if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
 
   const msgId = reaction.message.id;
+
+  // ── Update subscription removal ──
+  if (updateSubMessage && msgId === updateSubMessage.messageId) {
+    const emojiKey = reaction.emoji.id
+      ? `${reaction.emoji.name}:${reaction.emoji.id}`
+      : reaction.emoji.name;
+
+    if (emojiKey === updateSubMessage.emojiKey || reaction.emoji.name === updateSubMessage.emojiKey) {
+      await removeUpdateSubscriber(user.id);
+    }
+    return;
+  }
+
+  // ── Reaction roles removal ──
   if (!reactionRoles.has(msgId)) return;
 
   const emojiKey = reaction.emoji.id
