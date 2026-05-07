@@ -663,32 +663,36 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
-// ─── Channel Create → DM Subscribers ────────────────────────────────────────
+// ─── Channel Create → Post in Updates Channel ────────────────────────────────
+
+const UPDATES_CHANNEL_ID = '1500588941034655955';
 
 client.on('channelCreate', async (channel) => {
-  if (updateSubscribers.size === 0) return;
-
-  // Only notify for text/voice/category channels in a guild
   if (!channel.guild) return;
 
-  const channelMention = channel.type === ChannelType.GuildText
-    ? `#${channel.name}`
-    : channel.name;
+  try {
+    const updatesChannel = await client.channels.fetch(UPDATES_CHANNEL_ID).catch(() => null);
+    if (!updatesChannel) return;
 
-  for (const userId of updateSubscribers) {
-    try {
-      const user = await client.users.fetch(userId).catch(() => null);
-      if (!user) continue;
-      await user.send(
-        `✦ **new channel added** ✦\n` +
-        `┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
-        `${channelMention} was just added to **${channel.guild.name}**`
-      ).catch(() => {
-        // DMs closed — silently skip, don't remove from list
-      });
-    } catch (e) {
-      console.error(`Failed to DM subscriber ${userId}:`, e);
-    }
+    const isText = channel.type === ChannelType.GuildText;
+    const channelRef = isText ? `<#${channel.id}>` : `**${channel.name}**`;
+
+    const embed = new EmbedBuilder()
+      .setColor(0xFF69B4)
+      .setDescription(
+        `꩜ ────────────────── ꩜\n` +
+        `\n` +
+        `🤡  **new channel**\n` +
+        `\n` +
+        `${channelRef} was just added\n` +
+        `to **${channel.guild.name}**\n` +
+        `\n` +
+        `꩜ ────────────────── ꩜`
+      );
+
+    await updatesChannel.send({ embeds: [embed] });
+  } catch (e) {
+    console.error('Failed to post channel update:', e);
   }
 });
 
