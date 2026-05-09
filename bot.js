@@ -731,23 +731,26 @@ client.on('messageCreate', async (message) => {
   const command = args.shift().toLowerCase();
 
   // ── !xpost ────────────────────────────────────────────────────────────────
+   // ── !xpost ────────────────────────────────────────────────────────────────
   if (command === 'xpost') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('❌ Admin only.');
 
     const postCount = parseInt(args[0]);
-    const delayStr = args[1];
+    const delayStr = args[1] || '5s';
 
-    if (!postCount || postCount < 1) return message.reply('Usage: `!xpost <number> <delay>` — e.g. `!xpost 3 5s`');
+    if (!postCount || postCount < 1) {
+      return message.reply('Usage: `!xpost <number> <delay>`\nExample: `!xpost 1 10s`');
+    }
 
     const delayMs = parseCooldown(delayStr);
-    if (!delayMs) return message.reply('❌ Invalid delay. Use: 5s, 1m, etc.');
+    if (!delayMs) return message.reply('❌ Invalid delay. Examples: 5s, 10s, 30s');
 
-    const statusMsg = await message.reply(`⏳ Starting ${postCount} posts with ${formatCooldown(delayMs)} delay...`);
+    const statusMsg = await message.reply(`⏳ Starting ${postCount} post(s)...`);
 
     try {
-   
+      const XPOSTER_PATH = path.join(__dirname, 'xposter');   // ← Simplified
 
-      await statusMsg.edit('⏳ Running poster...');
+      console.log(`[xpost] Attempting to run from: ${XPOSTER_PATH}`);
 
       const child = spawn('node', ['xposter.mjs'], {
         cwd: XPOSTER_PATH,
@@ -761,27 +764,34 @@ client.on('messageCreate', async (message) => {
       let output = '';
 
       child.stdout.on('data', (data) => {
-        output += data.toString();
-        console.log('[xposter]', data.toString().trim());
+        const text = data.toString().trim();
+        output += text + '\n';
+        console.log('[xposter]', text);
       });
 
       child.stderr.on('data', (data) => {
-        output += data.toString();
-        console.error('[xposter error]', data.toString().trim());
+        const text = data.toString().trim();
+        output += text + '\n';
+        console.error('[xposter]', text);
+      });
+
+      child.on('error', async (err) => {
+        console.error('[xpost] Spawn error:', err);
+        await statusMsg.edit(`❌ Failed to start poster: ${err.message}`);
       });
 
       child.on('close', async (code) => {
-        const lines = output.trim().split('\n').slice(-5).join('\n');
+        const lastLines = output.trim().split('\n').slice(-10).join('\n');
         if (code === 0) {
-          await statusMsg.edit(`✅ Posted ${postCount} times!\n\`\`\`\n${lines}\n\`\`\``);
+          await statusMsg.edit(`✅ Finished!\n\`\`\`\n${lastLines}\`\`\``);
         } else {
-          await statusMsg.edit(`❌ Error (code ${code})\n\`\`\`\n${lines}\n\`\`\``);
+          await statusMsg.edit(`❌ Poster crashed (code ${code})\n\`\`\`\n${lastLines}\`\`\``);
         }
       });
 
     } catch (e) {
-      console.error('xpost error:', e);
-      await statusMsg.edit('❌ Error: ' + e.message);
+      console.error('[xpost] Error:', e);
+      await statusMsg.edit('❌ Error starting poster: ' + e.message);
     }
 
     return;
