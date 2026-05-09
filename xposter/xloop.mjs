@@ -17,7 +17,7 @@ async function initBrowser() {
   
   console.log("🚀 Launching browser for X login...");
   browser = await chromium.launch({ 
-    headless: true,
+    headless: false,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
   
