@@ -797,20 +797,26 @@ client.on('messageCreate', async (message) => {
     return;
   }
  // ── X LOOP POSTER ─────────────────────────────────────────────
+// ── X LOOP POSTER ─────────────────────────────────────────────
 if (command === 'startloop') {
   if (!requireAdmin(message)) return message.reply('❌ Admin only.');
 
   const delay = parseInt(args[0]) || 60;
   if (delay < 10) return message.reply('❌ Minimum delay is 10 seconds.');
 
-  const status = await message.reply(`🚀 Starting loop — every **${delay}** seconds...`);
+  const status = await message.reply(`🚀 Attempting to start loop — every **${delay}** seconds...`);
 
   try {
-    const { startLoop } = await import('./xposter/xloop.mjs');   // ← Updated path
+    console.log(`[LOOP] Attempting to import xloop.mjs...`);
+    const modulePath = './xposter/xloop.mjs';
+    const { startLoop } = await import(modulePath);
+    console.log(`[LOOP] Import successful, starting loop...`);
+    
     await startLoop(delay);
+    await status.edit(`✅ **Loop started!** Posting every **${delay}** seconds. Use !stoploop to stop.`);
   } catch (e) {
-    console.error(e);
-    await status.edit('❌ Failed to start loop.');
+    console.error('[LOOP] CRITICAL ERROR:', e);
+    await status.edit(`❌ Failed to start loop.\n\`\`\`\n${e.message}\n\`\`\``);
   }
   return;
 }
@@ -819,10 +825,11 @@ if (command === 'stoploop') {
   if (!requireAdmin(message)) return message.reply('❌ Admin only.');
   
   try {
-    const { stopLoop } = await import('./xposter/xloop.mjs');   // ← Updated path
+    const { stopLoop } = await import('./xposter/xloop.mjs');
     stopLoop();
-    await message.reply('⛔ Looping stopped.');
+    await message.reply('⛔ Loop stopped.');
   } catch (e) {
+    console.error('[LOOP] Stop error:', e);
     await message.reply('❌ Failed to stop loop.');
   }
   return;
