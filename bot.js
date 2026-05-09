@@ -1,5 +1,7 @@
 const { Client, GatewayIntentBits, PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
 const https = require('https');
+const { execSync, spawn } = require('child_process');
+const path = require('path');
 
 const client = new Client({
   intents: [
@@ -35,6 +37,13 @@ const seenRedditLinks = new Set();
 
 // Channel ID where counts AND seen links are stored
 const DATA_CHANNEL_ID = '1497467308010901525';
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// X AUTO POSTER CONFIG
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Path to your xposter folder — change this if it's in a different location
+const XPOSTER_PATH = path.join(__dirname, '..', 'xposter');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // X POST WATCHER CONFIG
@@ -735,6 +744,58 @@ client.on('messageCreate', async (message) => {
   const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = args.shift().toLowerCase();
 
+  // ── !xpost ────────────────────────────────────────────────────────────────
+  if (command === 'xpost') {
+    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+
+    const statusMsg = await message.reply('⏳ Pulling latest titles from GitHub...');
+
+    try {
+      // Pull latest code from GitHub
+      try {
+        execSync('git pull', { cwd: XPOSTER_PATH });
+      } catch (e) {
+        await statusMsg.edit('❌ Git pull failed: ' + e.message);
+        return;
+      }
+
+      await statusMsg.edit('⏳ Starting poster...');
+
+      // Run the poster as a child process
+      const child = spawn('node', ['xposter.mjs'], {
+        cwd: XPOSTER_PATH,
+        env: { ...process.env },
+      });
+
+      let output = '';
+
+      child.stdout.on('data', (data) => {
+        output += data.toString();
+        console.log('[xposter]', data.toString().trim());
+      });
+
+      child.stderr.on('data', (data) => {
+        output += data.toString();
+        console.error('[xposter error]', data.toString().trim());
+      });
+
+      child.on('close', async (code) => {
+        const lines = output.trim().split('\n').slice(-5).join('\n'); // last 5 lines
+        if (code === 0) {
+          await statusMsg.edit(`✅ All posts done!\n\`\`\`\n${lines}\n\`\`\``);
+        } else {
+          await statusMsg.edit(`❌ Poster exited with error (code ${code})\n\`\`\`\n${lines}\n\`\`\``);
+        }
+      });
+
+    } catch (e) {
+      console.error('xpost command error:', e);
+      await statusMsg.edit('❌ Something went wrong: ' + e.message);
+    }
+
+    return;
+  }
+
   // ── !disable ──────────────────────────────────────────────────────────────
   if (command === 'disable') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
@@ -1047,9 +1108,8 @@ client.on('messageCreate', async (message) => {
   if (command === 'updateset') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
 
-    // Build and send the embed
     const embed = new EmbedBuilder()
-      .setColor(0xFF69B4) // bright pink
+      .setColor(0xFF69B4)
       .setDescription(
         `꩜ ────────────────── ꩜\n` +
         `\n` +
@@ -1069,7 +1129,6 @@ client.on('messageCreate', async (message) => {
 
     const sent = await message.channel.send({ embeds: [embed] });
 
-    // Bot reacts with clown
     const CLOWN = '🤡';
     let reactedEmoji;
     try {
@@ -1084,7 +1143,6 @@ client.on('messageCreate', async (message) => {
       ? `${reactedEmoji.name}:${reactedEmoji.id}`
       : reactedEmoji.name;
 
-    // Store in memory
     updateSubMessage = {
       messageId: sent.id,
       channelId:  message.channel.id,
@@ -1092,7 +1150,6 @@ client.on('messageCreate', async (message) => {
       emojiKey,
     };
 
-    // Persist to data channel
     await saveUpdateSubMessage(sent.id, message.channel.id, message.guild.id, emojiKey);
 
     return;
@@ -1125,7 +1182,6 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
   const msgId = reaction.message.id;
 
-  // ── Update subscription check ──
   if (updateSubMessage && msgId === updateSubMessage.messageId) {
     const emojiKey = reaction.emoji.id
       ? `${reaction.emoji.name}:${reaction.emoji.id}`
@@ -1134,10 +1190,9 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (emojiKey === updateSubMessage.emojiKey || reaction.emoji.name === updateSubMessage.emojiKey) {
       await addUpdateSubscriber(user.id);
     }
-    return; // don't fall through to reaction roles
+    return;
   }
 
-  // ── Reaction roles check ──
   dbg(`Reaction on msg ${msgId} | emoji name: ${reaction.emoji.name} | emoji id: ${reaction.emoji.id} | known messages: ${[...reactionRoles.keys()].join(', ') || 'none'}`);
 
   if (!reactionRoles.has(msgId)) {
@@ -1179,7 +1234,6 @@ client.on('messageReactionRemove', async (reaction, user) => {
 
   const msgId = reaction.message.id;
 
-  // ── Update subscription removal ──
   if (updateSubMessage && msgId === updateSubMessage.messageId) {
     const emojiKey = reaction.emoji.id
       ? `${reaction.emoji.name}:${reaction.emoji.id}`
@@ -1191,7 +1245,6 @@ client.on('messageReactionRemove', async (reaction, user) => {
     return;
   }
 
-  // ── Reaction roles removal ──
   if (!reactionRoles.has(msgId)) return;
 
   const emojiKey = reaction.emoji.id
