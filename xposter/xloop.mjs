@@ -21,9 +21,9 @@ const postTitles = [
 
 const postImages = [
   "pic1.jpg", 
-  "pic2.png", 
-  "pic3.jpg",
-  "pic1.jpg" // You can repeat images or add more
+  
+
+
 ];
 // ----------------------------
 
