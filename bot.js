@@ -796,7 +796,35 @@ client.on('messageCreate', async (message) => {
 
     return;
   }
+  // ── X LOOP POSTER ─────────────────────────────────────────────
+if (command === 'startloop') {
+  if (!requireAdmin(message)) return message.reply('❌ Admin only.');
 
+  const delay = parseInt(args[0]) || 60;
+  if (delay < 10) return message.reply('❌ Minimum delay is 10 seconds.');
+
+  const status = await message.reply(`🚀 Starting loop — every **${delay}** seconds...`);
+
+  try {
+    const { startLoop } = await import('./xloop.mjs');
+    await startLoop(delay);
+  } catch (e) {
+    console.error(e);
+    status.edit('❌ Failed to start loop.');
+  }
+}
+
+if (command === 'stoploop') {
+  if (!requireAdmin(message)) return message.reply('❌ Admin only.');
+  
+  try {
+    const { stopLoop } = await import('./xloop.mjs');
+    stopLoop();
+    await message.reply('⛔ Looping stopped.');
+  } catch (e) {
+    await message.reply('❌ Failed to stop loop.');
+  }
+}
   // ── !disable ──────────────────────────────────────────────────────────────
   if (command === 'disable') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
