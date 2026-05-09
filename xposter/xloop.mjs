@@ -11,7 +11,7 @@ const posts = [
   "Test looping post 1 🔥 Auto poster is live",
   "Test looping post 2 🚀 Keep it going",
   "Checking in... bot is running smoothly! 🤖",
-  "Gemini is helping me stay online! 😉"
+  "The loop is real. 🚀 #Automation"
 ];
 
 async function initBrowser() {
@@ -49,34 +49,35 @@ async function postTweet(text) {
     if (!page) await initBrowser();
     console.log(`[LOOP] Posting: ${text.substring(0, 30)}...`);
     
-    // 1. Go to the home page
     await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    // 2. Try to find the "Post" button using multiple possible IDs
+    // Press Escape to clear any pop-ups (like "Enable Notifications")
+    await page.keyboard.press('Escape');
+
     const postButtonSelector = [
       'div[data-testid="SideNav_NewTweet_Button"]',
       'a[aria-label="Post"]',
-      'div[aria-label="Post"]',
-      'nav[aria-label="Primary"] [role="button"]'
+      'div[aria-label="Post"]'
     ].join(',');
 
     try {
       await page.waitForSelector(postButtonSelector, { timeout: 10000 });
-      await page.click(postButtonSelector);
+      // FORCE CLICK the sidebar button
+      await page.click(postButtonSelector, { force: true });
     } catch (e) {
-      console.log("[LOOP] Sidebar button not found, checking if text box is already open...");
+      console.log("[LOOP] Sidebar button skipped, looking for box...");
     }
 
-    // 3. Wait for the text box (using multiple possible selectors)
     const textBoxSelector = 'div[data-testid="tweetTextarea_0"], div[role="textbox"]';
     await page.waitForSelector(textBoxSelector, { timeout: 15000 });
-    await page.click(textBoxSelector);
+    
+    // FORCE CLICK the text area and type
+    await page.click(textBoxSelector, { force: true });
     await page.keyboard.type(text, { delay: 100 });
     
-    // 4. Click the final Post button
     const submitBtn = 'button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]';
     await page.waitForSelector(submitBtn, { timeout: 10000 });
-    await page.click(submitBtn);
+    await page.click(submitBtn, { force: true });
     
     console.log(`[LOOP] ✅ Posted successfully!`);
     return true;
