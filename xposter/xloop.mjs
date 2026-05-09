@@ -9,50 +9,52 @@ let interval = null;
 const COOKIE_PATH = './xposter/x-cookies.json';
 
 const posts = [
-  "Test looping post 1 🔥 Working on Railway",
-  "Test looping post 2 🚀 Free auto poster",
-  "Test looping post 3 💀 Loop bot active",
+  "Test looping post 1 🔥 Railway loop bot",
+  "Test looping post 2 🚀 Still going strong",
+  "Test looping post 3 💀 Free auto poster",
 ];
 
 async function initBrowser() {
-  console.log("[LOOP] Launching new browser...");
-  try {
-    if (browser) await browser.close().catch(() => {});
+  console.log("[LOOP] Launching browser...");
 
-    browser = await chromium.launch({ 
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process']
-    });
+  // Close old browser if exists
+  if (browser) await browser.close().catch(() => {});
 
-    const context = await browser.newContext();
-    page = await context.newPage();
-    await page.setViewportSize({ width: 1280, height: 800 });
+  browser = await chromium.launch({ 
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-extensions',
+      '--disable-background-networking'
+    ]
+  });
 
-    if (fs.existsSync(COOKIE_PATH)) {
-      console.log("[LOOP] Loading cookies...");
-      const cookies = JSON.parse(fs.readFileSync(COOKIE_PATH, 'utf8'));
-      await context.addCookies(cookies);
-    }
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 }
+  });
+  page = await context.newPage();
 
-    console.log("[LOOP] ✅ Browser initialized");
-  } catch (e) {
-    console.error("[LOOP] ❌ Failed to init browser:", e.message);
+  if (fs.existsSync(COOKIE_PATH)) {
+    console.log("[LOOP] Loading cookies...");
+    const cookies = JSON.parse(fs.readFileSync(COOKIE_PATH, 'utf8'));
+    await context.addCookies(cookies);
   }
+
+  console.log("[LOOP] ✅ Browser ready");
 }
 
 async function postTweet(text) {
-  if (!page) {
-    console.log("[LOOP] Page not ready, reinitializing...");
-    await initBrowser();
-    if (!page) return false;
-  }
+  if (!page) return false;
 
   try {
-    console.log(`[LOOP] → Posting: ${text.substring(0, 50)}...`);
-    
+    console.log(`[LOOP] → ${text.substring(0, 50)}...`);
+
     await page.goto('https://x.com/compose/tweet', { 
       waitUntil: 'domcontentloaded', 
-      timeout: 30000 
+      timeout: 25000 
     });
 
     await page.waitForSelector('div[data-testid="tweetTextarea_0"]', { timeout: 15000 });
@@ -62,10 +64,10 @@ async function postTweet(text) {
     await page.waitForSelector('button[data-testid="tweetButton"]', { timeout: 10000 });
     await page.click('button[data-testid="tweetButton"]');
 
-    console.log(`[LOOP] ✅ Successfully posted!`);
+    console.log(`[LOOP] ✅ Posted successfully`);
     return true;
   } catch (err) {
-    console.error("[LOOP] ❌ Post error:", err.message);
+    console.error("[LOOP] Post failed:", err.message);
     return false;
   }
 }
@@ -76,15 +78,19 @@ export async function startLoop(delaySeconds = 60) {
   await initBrowser();
   
   isRunning = true;
-  console.log(`[LOOP] 🔄 LOOP STARTED — every ${delaySeconds}s`);
+  console.log(`[LOOP] 🔄 LOOP STARTED — every ${delaySeconds} seconds`);
 
   let index = 0;
 
   interval = setInterval(async () => {
     if (!isRunning) return;
-    const text = posts[index % posts.length];
-    await postTweet(text);
-    index++;
+    try {
+      const text = posts[index % posts.length];
+      await postTweet(text);
+      index++;
+    } catch (e) {
+      console.error("[LOOP] Interval error:", e.message);
+    }
   }, delaySeconds * 1000);
 }
 
