@@ -11,7 +11,7 @@ let interval = null;
 
 const X_AUTH_TOKEN = process.env.X_AUTH_TOKEN; 
 
-// --- EDIT YOUR POSTS HERE ---
+// --- EDIT YOUR CONTENT HERE ---
 const postTitles = [
   "Check out this first update! 🔥",
   "Look at this cool graphic 🚀",
@@ -19,12 +19,8 @@ const postTitles = [
   "Looping back to the start! ✨"
 ];
 
-const postImages = [
-  "pic1.jpg", 
-  
-
-
-];
+// Put the exact name of your image file here (must be in the xposter folder)
+const STATIC_IMAGE_NAME = "image.jpg"; 
 // ----------------------------
 
 async function initBrowser() {
@@ -51,25 +47,25 @@ async function initBrowser() {
 async function postToX(title, imageName) {
   try {
     if (!page) await initBrowser();
-    console.log(`[LOOP] Preparing post: "${title}" with image: ${imageName}`);
+    console.log(`[LOOP] Preparing post: "${title}" with static image: ${imageName}`);
 
     await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.keyboard.press('Escape');
 
-    // 1. Open the Compose box
+    // 1. Open Compose
     const postBtn = 'a[aria-label="Post"], div[data-testid="SideNav_NewTweet_Button"]';
     await page.waitForSelector(postBtn, { timeout: 15000 });
     await page.click(postBtn, { force: true });
 
-    // 2. Upload the Image
+    // 2. Upload the Static Image
     const imagePath = path.join(__dirname, imageName);
     const fileInputSelector = 'input[data-testid="fileInput"]';
     await page.waitForSelector(fileInputSelector, { state: 'attached', timeout: 15000 });
     const handle = await page.$(fileInputSelector);
     await handle.setInputFiles(imagePath);
-    console.log(`[LOOP] Image uploaded: ${imageName}`);
+    console.log(`[LOOP] Image attached.`);
 
-    // 3. Type the Title
+    // 3. Type Title
     const textBox = 'div[data-testid="tweetTextarea_0"], div[role="textbox"]';
     await page.waitForSelector(textBox, { timeout: 15000 });
     await page.click(textBox, { force: true });
@@ -80,7 +76,7 @@ async function postToX(title, imageName) {
     await page.waitForSelector(submitBtn, { timeout: 15000 });
     await page.click(submitBtn, { force: true });
 
-    console.log(`[LOOP] ✅ Successfully posted to X!`);
+    console.log(`[LOOP] ✅ Successfully posted!`);
     return true;
   } catch (err) {
     console.error("[LOOP] ❌ Failed to post:", err.message);
@@ -96,16 +92,16 @@ export async function startLoop(delaySeconds = 60) {
   if (!ready) return;
   
   isRunning = true;
-  console.log(`[LOOP] 🔄 STARTED — Cycling ${postTitles.length} posts every ${delaySeconds}s`);
+  console.log(`[LOOP] 🔄 STARTED — Cycling titles with static image every ${delaySeconds}s`);
 
   let index = 0;
   interval = setInterval(async () => {
     if (!isRunning) return;
     
     const currentTitle = postTitles[index % postTitles.length];
-    const currentImage = postImages[index % postImages.length];
     
-    await postToX(currentTitle, currentImage);
+    // Always passes STATIC_IMAGE_NAME
+    await postToX(currentTitle, STATIC_IMAGE_NAME);
     index++;
   }, delaySeconds * 1000);
 }
