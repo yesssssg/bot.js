@@ -6,29 +6,37 @@ let isRunning = false;
 let interval = null;
 
 const posts = [
-  "Test looping post 1 🔥",
-  "Test looping post 2 🚀 Auto poster working",
-  "Test looping post 3 💀 Keep going",
+  "Test looping post 1 🔥 Auto poster working",
+  "Test looping post 2 🚀 Keep it going",
+  "Test looping post 3 💀 Free X loop bot",
   // Add your real posts here
 ];
 
 async function initBrowser() {
-  if (browser) return true;
-  
-  console.log("🚀 Launching browser for X login...");
-  browser = await chromium.launch({ 
-    headless: false,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-  });
-  
-  page = await browser.newPage();
-  await page.setViewportSize({ width: 1280, height: 800 });
-  console.log("Browser launched. Login may be needed on first run.");
-  return true;
+  console.log("[LOOP] Launching browser...");
+  try {
+    browser = await chromium.launch({ 
+      headless: true,
+      args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox', 
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+      ]
+    });
+    page = await browser.newPage();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    console.log("[LOOP] ✅ Browser launched successfully");
+    return true;
+  } catch (e) {
+    console.error("[LOOP] ❌ Browser launch failed:", e.message);
+    throw e;
+  }
 }
 
 async function postTweet(text) {
   try {
+    console.log(`[LOOP] Trying to post: ${text.substring(0, 50)}...`);
     await page.goto('https://x.com/compose/tweet', { waitUntil: 'networkidle', timeout: 30000 });
     
     await page.waitForSelector('div[data-testid="tweetTextarea_0"]', { timeout: 15000 });
@@ -38,23 +46,25 @@ async function postTweet(text) {
     await page.waitForSelector('button[data-testid="tweetButton"]', { timeout: 10000 });
     await page.click('button[data-testid="tweetButton"]');
     
-    console.log(`✅ Posted: ${text.substring(0, 60)}...`);
+    console.log(`[LOOP] ✅ Successfully posted: ${text.substring(0, 60)}...`);
     return true;
   } catch (err) {
-    console.error("❌ Failed to post:", err.message);
+    console.error("[LOOP] ❌ Post failed:", err.message);
     return false;
   }
 }
 
 export async function startLoop(delaySeconds = 60) {
-  if (isRunning) return console.log("✅ Loop is already running");
-  
+  if (isRunning) {
+    console.log("[LOOP] Loop is already running");
+    return;
+  }
+
   await initBrowser();
   
   isRunning = true;
   const delayMs = delaySeconds * 1000;
-  
-  console.log(`🔄 Infinite loop started — posting every ${delaySeconds} seconds`);
+  console.log(`[LOOP] 🔄 Infinite loop STARTED — posting every ${delaySeconds} seconds`);
 
   let index = 0;
 
@@ -72,7 +82,7 @@ export function stopLoop() {
     interval = null;
   }
   isRunning = false;
-  console.log("⛔ Loop stopped");
+  console.log("[LOOP] ⛔ Loop stopped");
 }
 
 export async function shutdown() {
