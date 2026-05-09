@@ -1,101 +1,104 @@
 import { chromium } from 'playwright';
-import fs from 'fs';
 
 let browser = null;
 let page = null;
 let isRunning = false;
 let interval = null;
 
-const COOKIE_PATH = './xposter/x-cookies.json';
+// This pulls the token safely from Railway's "Variables" tab
+const X_AUTH_TOKEN = process.env.X_AUTH_TOKEN; 
 
 const posts = [
-  "Test looping post 1 🔥 Railway loop bot",
-  "Test looping post 2 🚀 Still going strong",
-  "Test looping post 3 💀 Free auto poster",
+  "Test looping post 1 🔥 Auto poster is live",
+  "Test looping post 2 🚀 Keep it going",
+  "Checking in... bot is running smoothly! 🤖",
+  "Is Grok helping? Gemini is definitely on the job! 😉"
 ];
 
 async function initBrowser() {
   console.log("[LOOP] Launching browser...");
+  try {
+    if (!X_AUTH_TOKEN) {
+      console.error("[LOOP] ❌ ERROR: X_AUTH_TOKEN is missing in Railway Variables!");
+      return false;
+    }
 
-  // Close old browser if exists
-  if (browser) await browser.close().catch(() => {});
+    browser = await chromium.launch({ 
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+    const context = await browser.newContext();
+    
+    // Injecting the session token to bypass login
+    await context.addCookies([{
+      name: "auth_token",
+      value: X_AUTH_TOKEN,
+      domain: ".x.com",
+      path: "/",
+      httpOnly: true,
+      secure: true
+    }]);
 
-  browser = await chromium.launch({ 
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-extensions',
-      '--disable-background-networking'
-    ]
-  });
-
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 }
-  });
-  page = await context.newPage();
-
-  if (fs.existsSync(COOKIE_PATH)) {
-    console.log("[LOOP] Loading cookies...");
-    const cookies = JSON.parse(fs.readFileSync(COOKIE_PATH, 'utf8'));
-    await context.addCookies(cookies);
+    page = await context.newPage();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    console.log("[LOOP] ✅ Browser ready and session injected.");
+    return true;
+  } catch (e) {
+    console.error("[LOOP] ❌ Browser init failed:", e.message);
+    return false;
   }
-
-  console.log("[LOOP] ✅ Browser ready");
 }
 
 async function postTweet(text) {
-  if (!page) return false;
-
   try {
-    console.log(`[LOOP] → ${text.substring(0, 50)}...`);
+    if (!page || browser?.connected === false) {
+      console.log("[LOOP] Browser closed or missing, restarting...");
+      await initBrowser();
+    }
 
-    await page.goto('https://x.com/compose/tweet', { 
-      waitUntil: 'domcontentloaded', 
-      timeout: 25000 
-    });
-
-    await page.waitForSelector('div[data-testid="tweetTextarea_0"]', { timeout: 15000 });
+    console.log(`[LOOP] Attempting to post: ${text.substring(0, 30)}...`);
+    
+    // Go directly to the compose box
+    await page.goto('https://x.com/compose/tweet', { waitUntil: 'networkidle', timeout: 60000 });
+    
+    // Wait for the draft area to appear
+    await page.waitForSelector('div[data-testid="tweetTextarea_0"]', { timeout: 20000 });
     await page.click('div[data-testid="tweetTextarea_0"]');
     await page.keyboard.type(text);
-
+    
+    // Click the Post button
     await page.waitForSelector('button[data-testid="tweetButton"]', { timeout: 10000 });
     await page.click('button[data-testid="tweetButton"]');
-
-    console.log(`[LOOP] ✅ Posted successfully`);
+    
+    console.log(`[LOOP] ✅ Posted successfully!`);
     return true;
   } catch (err) {
-    console.error("[LOOP] Post failed:", err.message);
+    console.error("[LOOP] ❌ Post failed:", err.message);
+    if (browser) await browser.close();
+    page = null;
     return false;
   }
 }
 
 export async function startLoop(delaySeconds = 60) {
-  if (isRunning) return console.log("[LOOP] Already running");
-
-  await initBrowser();
+  if (isRunning) return console.log("[LOOP] Loop already running.");
   
+  const ready = await initBrowser();
+  if (!ready) return;
+
   isRunning = true;
-  console.log(`[LOOP] 🔄 LOOP STARTED — every ${delaySeconds} seconds`);
-
+  console.log(`[LOOP] 🔄 LOOP STARTED — Posting every ${delaySeconds}s`);
+  
   let index = 0;
-
   interval = setInterval(async () => {
     if (!isRunning) return;
-    try {
-      const text = posts[index % posts.length];
-      await postTweet(text);
-      index++;
-    } catch (e) {
-      console.error("[LOOP] Interval error:", e.message);
-    }
+    await postTweet(posts[index % posts.length]);
+    index++;
   }, delaySeconds * 1000);
 }
 
 export function stopLoop() {
   if (interval) clearInterval(interval);
   isRunning = false;
-  console.log("[LOOP] ⛔ Loop stopped");
+  console.log("[LOOP] ⛔ Loop stopped.");
 }
