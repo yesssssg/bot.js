@@ -22,7 +22,6 @@ async function initBrowser() {
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     
-    // We add a UserAgent so X thinks we are a real Chrome browser
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     });
@@ -50,25 +49,39 @@ async function postTweet(text) {
     if (!page) await initBrowser();
     console.log(`[LOOP] Posting: ${text.substring(0, 30)}...`);
     
-    // Switch to the main home page first (faster than the direct compose link)
+    // 1. Go to the home page
     await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    // 2. Try to find the "Post" button using multiple possible IDs
+    const postButtonSelector = [
+      'div[data-testid="SideNav_NewTweet_Button"]',
+      'a[aria-label="Post"]',
+      'div[aria-label="Post"]',
+      'nav[aria-label="Primary"] [role="button"]'
+    ].join(',');
+
+    try {
+      await page.waitForSelector(postButtonSelector, { timeout: 10000 });
+      await page.click(postButtonSelector);
+    } catch (e) {
+      console.log("[LOOP] Sidebar button not found, checking if text box is already open...");
+    }
+
+    // 3. Wait for the text box (using multiple possible selectors)
+    const textBoxSelector = 'div[data-testid="tweetTextarea_0"], div[role="textbox"]';
+    await page.waitForSelector(textBoxSelector, { timeout: 15000 });
+    await page.click(textBoxSelector);
+    await page.keyboard.type(text, { delay: 100 });
     
-    // Click the "Post" button on the sidebar OR the text box
-    await page.waitForSelector('div[data-testid="SideNav_NewTweet_Button"]', { timeout: 20000 });
-    await page.click('div[data-testid="SideNav_NewTweet_Button"]');
-    
-    // Wait for text box and type
-    await page.waitForSelector('div[data-testid="tweetTextarea_0"]', { timeout: 15000 });
-    await page.type('div[data-testid="tweetTextarea_0"]', text, { delay: 100 });
-    
-    // Click Post button
-    await page.click('button[data-testid="tweetButton"]');
+    // 4. Click the final Post button
+    const submitBtn = 'button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]';
+    await page.waitForSelector(submitBtn, { timeout: 10000 });
+    await page.click(submitBtn);
     
     console.log(`[LOOP] ✅ Posted successfully!`);
     return true;
   } catch (err) {
     console.error("[LOOP] ❌ Post failed:", err.message);
-    // Close browser on error to reset for the next attempt
     if (browser) await browser.close();
     page = null;
     return false;
