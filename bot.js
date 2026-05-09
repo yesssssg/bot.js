@@ -731,61 +731,85 @@ client.on('messageCreate', async (message) => {
   const command = args.shift().toLowerCase();
 
   // ── !xpost ────────────────────────────────────────────────────────────────
-  if (command === 'xpost') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
-
-    const postCount = parseInt(args[0]);
-    const delayStr = args[1];
-
-    if (!postCount || postCount < 1) return message.reply('Usage: `!xpost <number> <delay>` — e.g. `!xpost 3 5s`');
-
-    const delayMs = parseCooldown(delayStr);
-    if (!delayMs) return message.reply('❌ Invalid delay. Use: 5s, 1m, etc.');
-
-    const statusMsg = await message.reply(`⏳ Starting ${postCount} posts with ${formatCooldown(delayMs)} delay...`);
-
-    try {
-   
-
-      await statusMsg.edit('⏳ Running poster...');
-
-      const child = spawn('node', ['xposter.mjs'], {
-        cwd: XPOSTER_PATH,
-        env: {
-          ...process.env,
-          POST_COUNT: postCount.toString(),
-          POST_DELAY_MS: delayMs.toString(),
-        },
-      });
-
-      let output = '';
-
-      child.stdout.on('data', (data) => {
-        output += data.toString();
-        console.log('[xposter]', data.toString().trim());
-      });
-
-      child.stderr.on('data', (data) => {
-        output += data.toString();
-        console.error('[xposter error]', data.toString().trim());
-      });
-
-      child.on('close', async (code) => {
-        const lines = output.trim().split('\n').slice(-5).join('\n');
-        if (code === 0) {
-          await statusMsg.edit(`✅ Posted ${postCount} times!\n\`\`\`\n${lines}\n\`\`\``);
-        } else {
-          await statusMsg.edit(`❌ Error (code ${code})\n\`\`\`\n${lines}\n\`\`\``);
-        }
-      });
-
-    } catch (e) {
-      console.error('xpost error:', e);
-      await statusMsg.edit('❌ Error: ' + e.message);
-    }
-
-    return;
+  // ── !xpost ────────────────────────────────────────────────────────────────
+if (command === 'xpost') {
+  if (!requireAdmin(message)) {
+    return message.reply('❌ You need Administrator permission to use this command.');
   }
+
+  const postCount = parseInt(args[0]);
+  const delayStr = args[1];
+
+  if (!postCount || postCount < 1) {
+    return message.reply('Usage: `!xpost <number> <delay>` — e.g. `!xpost 3 5s`');
+  }
+
+  const delayMs = parseCooldown(delayStr);
+  if (!delayMs) {
+    return message.reply('❌ Invalid delay. Use like: 5s, 1m, 2h');
+  }
+
+  const statusMsg = await message.reply(
+    `⏳ Starting ${postCount} posts with ${formatCooldown(delayMs)} delay...`
+  );
+
+  try {
+    const XPOSTER_DIR = path.resolve(__dirname, '..', 'xposter');
+    const SCRIPT_PATH = path.join(XPOSTER_DIR, 'xposter.mjs');
+
+    console.log('[xposter] dir:', XPOSTER_DIR);
+    console.log('[xposter] script:', SCRIPT_PATH);
+
+    const child = spawn(process.execPath, [SCRIPT_PATH], {
+      cwd: XPOSTER_DIR,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        POST_COUNT: String(postCount),
+        POST_DELAY_MS: String(delayMs),
+      },
+    });
+
+    let output = '';
+
+    child.stdout.on('data', (data) => {
+      const text = data.toString();
+      output += text;
+      console.log('[xposter]', text.trim());
+    });
+
+    child.stderr.on('data', (data) => {
+      const text = data.toString();
+      output += text;
+      console.error('[xposter error]', text.trim());
+    });
+
+    child.on('error', async (err) => {
+      console.error('[xposter spawn error]', err);
+      await statusMsg.edit('❌ Failed to start xposter process.');
+    });
+
+    child.on('close', async (code) => {
+      const lastOutput = output.trim().split('\n').slice(-5).join('\n');
+
+      if (code === 0) {
+        await statusMsg.edit(
+          `✅ Posted ${postCount} times!\n\`\`\`\n${lastOutput || 'No output'}\n\`\`\``
+        );
+      } else {
+        await statusMsg.edit(
+          `❌ Xposter crashed (code ${code})\n\`\`\`\n${lastOutput || 'No output'}\n\`\`\``
+        );
+      }
+    });
+
+  } catch (e) {
+    console.error('[xpost fatal error]', e);
+    await statusMsg.edit(`❌ Error: ${e.message}`);
+  }
+
+  return;
+}
 
   // ── !disable ──────────────────────────────────────────────────────────────
   if (command === 'disable') {
