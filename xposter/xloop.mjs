@@ -1,4 +1,8 @@
 import { chromium } from 'playwright';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let browser = null;
 let page = null;
@@ -7,12 +11,21 @@ let interval = null;
 
 const X_AUTH_TOKEN = process.env.X_AUTH_TOKEN; 
 
-const posts = [
-  "Test looping post 1 🔥 Auto poster is live",
-  "Test looping post 2 🚀 Keep it going",
-  "Checking in... bot is running smoothly! 🤖",
-  "The loop is real. 🚀 #Automation"
+// --- EDIT YOUR POSTS HERE ---
+const postTitles = [
+  "Check out this first update! 🔥",
+  "Look at this cool graphic 🚀",
+  "Automated posting is easy with Gemini 🤖",
+  "Looping back to the start! ✨"
 ];
+
+const postImages = [
+  "pic1.jpg", 
+  "pic2.png", 
+  "pic3.jpg",
+  "pic1.jpg" // You can repeat images or add more
+];
+// ----------------------------
 
 async function initBrowser() {
   console.log("[LOOP] Launching stealth browser...");
@@ -21,22 +34,13 @@ async function initBrowser() {
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
-    
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     });
-    
     await context.addCookies([{
-      name: "auth_token",
-      value: X_AUTH_TOKEN,
-      domain: ".x.com",
-      path: "/",
-      httpOnly: true,
-      secure: true
+      name: "auth_token", value: X_AUTH_TOKEN, domain: ".x.com", path: "/", httpOnly: true, secure: true
     }]);
-
     page = await context.newPage();
-    console.log("[LOOP] ✅ Stealth browser ready.");
     return true;
   } catch (e) {
     console.error("[LOOP] ❌ Init failed:", e.message);
@@ -44,45 +48,42 @@ async function initBrowser() {
   }
 }
 
-async function postTweet(text) {
+async function postToX(title, imageName) {
   try {
     if (!page) await initBrowser();
-    console.log(`[LOOP] Posting: ${text.substring(0, 30)}...`);
-    
-    await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    console.log(`[LOOP] Preparing post: "${title}" with image: ${imageName}`);
 
-    // Press Escape to clear any pop-ups (like "Enable Notifications")
+    await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.keyboard.press('Escape');
 
-    const postButtonSelector = [
-      'div[data-testid="SideNav_NewTweet_Button"]',
-      'a[aria-label="Post"]',
-      'div[aria-label="Post"]'
-    ].join(',');
+    // 1. Open the Compose box
+    const postBtn = 'a[aria-label="Post"], div[data-testid="SideNav_NewTweet_Button"]';
+    await page.waitForSelector(postBtn, { timeout: 15000 });
+    await page.click(postBtn, { force: true });
 
-    try {
-      await page.waitForSelector(postButtonSelector, { timeout: 10000 });
-      // FORCE CLICK the sidebar button
-      await page.click(postButtonSelector, { force: true });
-    } catch (e) {
-      console.log("[LOOP] Sidebar button skipped, looking for box...");
-    }
+    // 2. Upload the Image
+    const imagePath = path.join(__dirname, imageName);
+    const fileInputSelector = 'input[data-testid="fileInput"]';
+    await page.waitForSelector(fileInputSelector, { state: 'attached', timeout: 15000 });
+    const handle = await page.$(fileInputSelector);
+    await handle.setInputFiles(imagePath);
+    console.log(`[LOOP] Image uploaded: ${imageName}`);
 
-    const textBoxSelector = 'div[data-testid="tweetTextarea_0"], div[role="textbox"]';
-    await page.waitForSelector(textBoxSelector, { timeout: 15000 });
-    
-    // FORCE CLICK the text area and type
-    await page.click(textBoxSelector, { force: true });
-    await page.keyboard.type(text, { delay: 100 });
-    
-    const submitBtn = 'button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]';
-    await page.waitForSelector(submitBtn, { timeout: 10000 });
+    // 3. Type the Title
+    const textBox = 'div[data-testid="tweetTextarea_0"], div[role="textbox"]';
+    await page.waitForSelector(textBox, { timeout: 15000 });
+    await page.click(textBox, { force: true });
+    await page.keyboard.type(title, { delay: 50 });
+
+    // 4. Submit
+    const submitBtn = 'button[data-testid="tweetButton"]';
+    await page.waitForSelector(submitBtn, { timeout: 15000 });
     await page.click(submitBtn, { force: true });
-    
-    console.log(`[LOOP] ✅ Posted successfully!`);
+
+    console.log(`[LOOP] ✅ Successfully posted to X!`);
     return true;
   } catch (err) {
-    console.error("[LOOP] ❌ Post failed:", err.message);
+    console.error("[LOOP] ❌ Failed to post:", err.message);
     if (browser) await browser.close();
     page = null;
     return false;
@@ -93,13 +94,18 @@ export async function startLoop(delaySeconds = 60) {
   if (isRunning) return;
   const ready = await initBrowser();
   if (!ready) return;
-  isRunning = true;
-  console.log(`[LOOP] 🔄 STARTED — Posting every ${delaySeconds}s`);
   
+  isRunning = true;
+  console.log(`[LOOP] 🔄 STARTED — Cycling ${postTitles.length} posts every ${delaySeconds}s`);
+
   let index = 0;
   interval = setInterval(async () => {
     if (!isRunning) return;
-    await postTweet(posts[index % posts.length]);
+    
+    const currentTitle = postTitles[index % postTitles.length];
+    const currentImage = postImages[index % postImages.length];
+    
+    await postToX(currentTitle, currentImage);
     index++;
   }, delaySeconds * 1000);
 }
