@@ -3,21 +3,21 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 // ─────────────────────────────────────────
-//  EDIT THESE
+//  CONFIG - EDIT HERE
 // ─────────────────────────────────────────
 
 const postTitles = [
-  "First title goes here",
-  "Second title goes here",
-  "Third title goes here",
+  "Test post from Railway 🚀",
+  "This is working perfectly!",
+  "Auto poster is live 🔥",
+  // Add as many titles as you want
 ];
 
+const useImage = false;                    // Change to true when you add image.jpg
 const imagePath = "./xposter/image.jpg";
 
-const delayBetweenPostsSeconds = 60;
-
 // ─────────────────────────────────────────
-//  DO NOT EDIT BELOW THIS LINE
+//  MAIN CODE (Do not edit below)
 // ─────────────────────────────────────────
 
 const client = new TwitterApi({
@@ -33,47 +33,58 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function uploadImage(imgPath) {
-  const absolutePath = path.resolve(imgPath);
-  if (!fs.existsSync(absolutePath)) {
-    throw new Error(`Image not found at: ${absolutePath}`);
+async function uploadImage() {
+  if (!useImage) return null;
+  try {
+    const absolutePath = path.resolve(imagePath);
+    if (!fs.existsSync(absolutePath)) {
+      console.log("⚠️ Image not found, posting text only.");
+      return null;
+    }
+    console.log("📸 Uploading image...");
+    const mediaId = await rwClient.v1.uploadMedia(absolutePath);
+    console.log("✅ Image uploaded");
+    return mediaId;
+  } catch (e) {
+    console.log("⚠️ Image upload failed:", e.message);
+    return null;
   }
-  console.log(`Uploading image: ${absolutePath}`);
-  const mediaId = await rwClient.v1.uploadMedia(absolutePath);
-  console.log(`Image uploaded. Media ID: ${mediaId}`);
-  return mediaId;
 }
 
 async function run() {
-  console.log(`\nStarting X auto-poster`);
-  console.log(`${postTitles.length} posts queued\n`);
+  // Read values sent by the bot (!xpost command)
+  const postCount = parseInt(process.env.POST_COUNT) || postTitles.length || 1;
+  const delayMs   = parseInt(process.env.POST_DELAY_MS) || 5000;
 
-  const mediaId = await uploadImage(imagePath);
+  console.log(`🚀 X Poster Started - ${postCount} posts, ${delayMs/1000}s delay`);
 
-  for (let i = 0; i < postTitles.length; i++) {
-    const title = postTitles[i];
-    console.log(`\n[${i + 1}/${postTitles.length}] Posting: "${title}"`);
+  const mediaId = await uploadImage();
+
+  for (let i = 0; i < postCount; i++) {
+    const text = postTitles[i % postTitles.length] || `Post ${i+1}`;
+
+    console.log(`\n[${i+1}/${postCount}] Posting: ${text}`);
 
     try {
-      const tweet = await rwClient.v2.tweet({
-        text: title,
-        media: { media_ids: [mediaId] },
-      });
-      console.log(`Posted! Tweet ID: ${tweet.data.id}`);
+      const options = { text: text };
+      if (mediaId) options.media = { media_ids: [mediaId] };
+
+      const tweet = await rwClient.v2.tweet(options);
+      console.log(`✅ Posted! → https://x.com/i/web/status/${tweet.data.id}`);
     } catch (err) {
-      console.error(`Failed to post: ${err.message}`);
+      console.error(`❌ Error posting:`, err.message);
     }
 
-    if (i < postTitles.length - 1) {
-      console.log(`Waiting ${delayBetweenPostsSeconds}s before next post...`);
-      await sleep(delayBetweenPostsSeconds * 1000);
+    if (i < postCount - 1) {
+      console.log(`⏳ Waiting ${delayMs/1000} seconds...`);
+      await sleep(delayMs);
     }
   }
 
-  console.log(`\nAll ${postTitles.length} posts done!`);
+  console.log(`\n🎉 Finished posting ${postCount} tweets!`);
 }
 
 run().catch(err => {
-  console.error('Fatal error:', err.message);
+  console.error("Fatal error:", err.message);
   process.exit(1);
 });
