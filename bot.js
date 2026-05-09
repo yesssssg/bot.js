@@ -24,25 +24,20 @@ const spamTracker = new Map();
 const reactionRoles = new Map();
 
 // Update subscriptions
-// updateSubMessage: { messageId, channelId, guildId, emojiKey }
 let updateSubMessage = null;
-const updateSubscribers = new Set(); // Set of userIds
+const updateSubscribers = new Set();
 
-// In-memory cache of combined post counts { userId -> count }
+// Post counts cache
 const postCounts = new Map();
 
-// In-memory sets of already-seen link IDs
+// Seen links
 const seenXLinks = new Set();
 const seenRedditLinks = new Set();
 
-// Channel ID where counts AND seen links are stored
+// Data channel
 const DATA_CHANNEL_ID = '1497467308010901525';
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// X AUTO POSTER CONFIG
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-// Path to your xposter folder — change this if it's in a different location
+// X Auto Poster config
 const XPOSTER_PATH = path.join(__dirname, '..', 'xposter');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -74,22 +69,21 @@ const REDDIT_WATCH = {
   GUIDE_CHANNEL_ID: '1498948285581365353',
 };
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 // ─── Data Channel Storage ─────────────────────────────────────────────────────
 
 let dataChannel = null;
 const dataMessages = new Map();
 const reactionRoleMessages = new Map();
-
-// Persistent message handles for update sub data
-let updateSubMsgHandle = null;        // the single UPMSG: record
-const updateSubUserHandles = new Map(); // userId -> discord message for UPSUB:
+let updateSubMsgHandle = null;
+const updateSubUserHandles = new Map();
 
 async function loadDataFromChannel() {
   try {
     dataChannel = await client.channels.fetch(DATA_CHANNEL_ID);
-    if (!dataChannel) { console.error('Data channel not found!'); return; }
+    if (!dataChannel) {
+      console.error('Data channel not found!');
+      return;
+    }
 
     let lastId = null;
     let allMessages = [];
@@ -113,19 +107,16 @@ async function loadDataFromChannel() {
         if (isNaN(count)) continue;
         postCounts.set(userId, count);
         dataMessages.set(userId, msg);
-        continue;
       }
 
       if (msg.content.startsWith('XLINK:')) {
         const tweetId = msg.content.slice(6).trim();
         if (tweetId) seenXLinks.add(tweetId);
-        continue;
       }
 
       if (msg.content.startsWith('RLINK:')) {
         const postId = msg.content.slice(6).trim();
         if (postId) seenRedditLinks.add(postId);
-        continue;
       }
 
       if (msg.content.startsWith('RROLE|')) {
@@ -135,37 +126,31 @@ async function loadDataFromChannel() {
         if (!reactionRoles.has(msgId)) reactionRoles.set(msgId, {});
         reactionRoles.get(msgId)[emojiKey] = roleId;
         reactionRoleMessages.set(msgId + '|' + emojiKey, msg);
-        continue;
       }
 
-      // UPMSG:messageId:channelId:guildId:emojiKey
       if (msg.content.startsWith('UPMSG:')) {
         const parts = msg.content.split(':');
-        // emojiKey may contain a colon (custom emoji name:id), so rejoin tail
         if (parts.length >= 5) {
           const [, messageId, channelId, guildId, ...emojiParts] = parts;
           const emojiKey = emojiParts.join(':');
           updateSubMessage = { messageId, channelId, guildId, emojiKey };
           updateSubMsgHandle = msg;
         }
-        continue;
       }
 
-      // UPSUB:userId
       if (msg.content.startsWith('UPSUB:')) {
         const userId = msg.content.slice(6).trim();
         if (userId) {
           updateSubscribers.add(userId);
           updateSubUserHandles.set(userId, msg);
         }
-        continue;
       }
     }
 
     console.log(
       `Loaded ${postCounts.size} user counts, ${seenXLinks.size} seen X links, ` +
       `${seenRedditLinks.size} seen Reddit links, ${reactionRoles.size} reaction role messages, ` +
-      `${updateSubscribers.size} update subscribers from data channel.`
+      `${updateSubscribers.size} update subscribers.`
     );
   } catch (e) {
     console.error('Failed to load data from channel:', e);
@@ -227,8 +212,6 @@ async function saveReactionRole(msgId, emojiKey, roleId) {
   }
 }
 
-// ─── Update Sub Persistence ───────────────────────────────────────────────────
-
 async function saveUpdateSubMessage(messageId, channelId, guildId, emojiKey) {
   try {
     if (!dataChannel) return;
@@ -282,10 +265,10 @@ function parseCooldown(str) {
 }
 
 function formatCooldown(ms) {
-  if (ms >= 86400000) return `${ms / 86400000}d`;
-  if (ms >= 3600000)  return `${ms / 3600000}h`;
-  if (ms >= 60000)    return `${ms / 60000}m`;
-  return `${ms / 1000}s`;
+  if (ms >= 86400000) return `${(ms / 86400000).toFixed(1)}d`;
+  if (ms >= 3600000) return `${(ms / 3600000).toFixed(1)}h`;
+  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function requireAdmin(message) {
@@ -305,11 +288,17 @@ function findClosestChannel(guild, query) {
     let nameIdx = 0;
     for (const char of q) {
       while (nameIdx < name.length && name[nameIdx] !== char) nameIdx++;
-      if (nameIdx < name.length) { score++; nameIdx++; }
+      if (nameIdx < name.length) {
+        score++;
+        nameIdx++;
+      }
     }
     if (name.startsWith(q)) score += 5;
     if (name.includes(q)) score += 3;
-    if (score > bestScore) { bestScore = score; bestMatch = channel; }
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = channel;
+    }
   }
 
   return bestScore > 0 ? bestMatch : null;
@@ -391,16 +380,12 @@ function extractTweetId(url) {
   return match ? match[1] : null;
 }
 
-// ─── Format Spam Check ────────────────────────────────────────────────────────
-
 function isFormatSpam(content) {
   const newlineCount = (content.match(/\n/g) || []).length;
   if (newlineCount > 3) return true;
   if (/(.)\1{48,}/.test(content)) return true;
   return false;
 }
-
-// ─── X Link Watcher ───────────────────────────────────────────────────────────
 
 async function checkXLink(message, url) {
   try {
@@ -418,8 +403,9 @@ async function checkXLink(message, url) {
     const raw = await fetchURL(apiUrl);
 
     let json;
-    try { json = JSON.parse(raw); }
-    catch {
+    try {
+      json = JSON.parse(raw);
+    } catch {
       console.error('fxtwitter returned non-JSON:', raw.slice(0, 200));
       return;
     }
@@ -482,8 +468,6 @@ function extractRedditPostId(url) {
   return match ? match[1] : null;
 }
 
-// ─── Reddit Link Watcher ──────────────────────────────────────────────────────
-
 async function checkRedditLink(message, url) {
   try {
     const postId = extractRedditPostId(url);
@@ -510,7 +494,11 @@ async function checkRedditLink(message, url) {
     let postData = null;
     if (raw) {
       let json;
-      try { json = JSON.parse(raw); } catch { json = null; }
+      try {
+        json = JSON.parse(raw);
+      } catch {
+        json = null;
+      }
       postData = json?.[0]?.data?.children?.[0]?.data || null;
     }
 
@@ -534,13 +522,13 @@ async function checkRedditLink(message, url) {
       return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount2}/${REDDIT_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
     }
 
-    const postTitle    = (postData.title    || '').trim().toLowerCase();
+    const postTitle = (postData.title || '').trim().toLowerCase();
     const postSelftext = (postData.selftext || '').trim().toLowerCase();
-    const targetClean  = REDDIT_WATCH.TARGET_TEXT.trim().toLowerCase();
+    const targetClean = REDDIT_WATCH.TARGET_TEXT.trim().toLowerCase();
 
-    const titleMatch    = postTitle.includes(targetClean) || postTitle === targetClean;
+    const titleMatch = postTitle.includes(targetClean) || postTitle === targetClean;
     const selftextMatch = postSelftext.includes(targetClean) || postSelftext === targetClean;
-    const canRead       = postTitle.length > 0 || postSelftext.length > 0;
+    const canRead = postTitle.length > 0 || postSelftext.length > 0;
 
     if (canRead && !titleMatch && !selftextMatch) {
       await saveSeenRedditLink(postId);
@@ -638,8 +626,6 @@ async function handleAntiSpam(message) {
 
   return false;
 }
-
-// ─── Invite Link Filter ───────────────────────────────────────────────────────
 
 function containsInviteLink(content) {
   const lower = content.toLowerCase();
@@ -748,23 +734,28 @@ client.on('messageCreate', async (message) => {
   if (command === 'xpost') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
 
-    const statusMsg = await message.reply('⏳ Pulling latest titles from GitHub...');
+    const postCount = parseInt(args[0]);
+    const delayStr = args[1];
+
+    if (!postCount || postCount < 1) return message.reply('Usage: `!xpost <number> <delay>` — e.g. `!xpost 3 5s`');
+
+    const delayMs = parseCooldown(delayStr);
+    if (!delayMs) return message.reply('❌ Invalid delay. Use: 5s, 1m, etc.');
+
+    const statusMsg = await message.reply(`⏳ Starting ${postCount} posts with ${formatCooldown(delayMs)} delay...`);
 
     try {
-      // Pull latest code from GitHub
-      try {
-        execSync('git pull', { cwd: XPOSTER_PATH });
-      } catch (e) {
-        await statusMsg.edit('❌ Git pull failed: ' + e.message);
-        return;
-      }
+      execSync('git pull', { cwd: XPOSTER_PATH });
 
-      await statusMsg.edit('⏳ Starting poster...');
+      await statusMsg.edit('⏳ Running poster...');
 
-      // Run the poster as a child process
       const child = spawn('node', ['xposter.mjs'], {
         cwd: XPOSTER_PATH,
-        env: { ...process.env },
+        env: {
+          ...process.env,
+          POST_COUNT: postCount.toString(),
+          POST_DELAY_MS: delayMs.toString(),
+        },
       });
 
       let output = '';
@@ -780,17 +771,17 @@ client.on('messageCreate', async (message) => {
       });
 
       child.on('close', async (code) => {
-        const lines = output.trim().split('\n').slice(-5).join('\n'); // last 5 lines
+        const lines = output.trim().split('\n').slice(-5).join('\n');
         if (code === 0) {
-          await statusMsg.edit(`✅ All posts done!\n\`\`\`\n${lines}\n\`\`\``);
+          await statusMsg.edit(`✅ Posted ${postCount} times!\n\`\`\`\n${lines}\n\`\`\``);
         } else {
-          await statusMsg.edit(`❌ Poster exited with error (code ${code})\n\`\`\`\n${lines}\n\`\`\``);
+          await statusMsg.edit(`❌ Error (code ${code})\n\`\`\`\n${lines}\n\`\`\``);
         }
       });
 
     } catch (e) {
-      console.error('xpost command error:', e);
-      await statusMsg.edit('❌ Something went wrong: ' + e.message);
+      console.error('xpost error:', e);
+      await statusMsg.edit('❌ Error: ' + e.message);
     }
 
     return;
@@ -800,8 +791,16 @@ client.on('messageCreate', async (message) => {
   if (command === 'disable') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
     let stopped = 0;
-    for (const [channelId, data] of everyonePingIntervals) { clearInterval(data.interval); everyonePingIntervals.delete(channelId); stopped++; }
-    for (const [channelId, data] of userPingIntervals) { clearInterval(data.interval); userPingIntervals.delete(channelId); stopped++; }
+    for (const [channelId, data] of everyonePingIntervals) {
+      clearInterval(data.interval);
+      everyonePingIntervals.delete(channelId);
+      stopped++;
+    }
+    for (const [channelId, data] of userPingIntervals) {
+      clearInterval(data.interval);
+      userPingIntervals.delete(channelId);
+      stopped++;
+    }
     if (stopped === 0) return message.reply('ℹ️ No active auto-pings to stop.');
     return message.reply(`✅ Stopped **${stopped}** active auto-ping${stopped !== 1 ? 's' : ''}.`);
   }
@@ -810,7 +809,10 @@ client.on('messageCreate', async (message) => {
   if (command === 'pingjoin') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
     const sub = args[0]?.toLowerCase();
-    if (sub === 'enable') { pingJoinChannels.set(message.guild.id, message.channel.id); return message.reply(`✅ Join pings **enabled** in this channel.`); }
+    if (sub === 'enable') {
+      pingJoinChannels.set(message.guild.id, message.channel.id);
+      return message.reply(`✅ Join pings **enabled** in this channel.`);
+    }
     if (sub === 'disable') {
       if (!pingJoinChannels.has(message.guild.id)) return message.reply('ℹ️ Join pings are not active.');
       pingJoinChannels.delete(message.guild.id);
@@ -829,7 +831,14 @@ client.on('messageCreate', async (message) => {
       const cooldownMs = parseCooldown(cooldownStr);
       if (!cooldownMs) return message.reply('❌ Invalid cooldown.');
       if (everyonePingIntervals.has(message.channel.id)) clearInterval(everyonePingIntervals.get(message.channel.id).interval);
-      const interval = setInterval(async () => { try { const p = await message.channel.send('@everyone'); p.delete().catch(() => {}); } catch (e) { console.error(e); } }, cooldownMs);
+      const interval = setInterval(async () => {
+        try {
+          const p = await message.channel.send('@everyone');
+          p.delete().catch(() => {});
+        } catch (e) {
+          console.error(e);
+        }
+      }, cooldownMs);
       everyonePingIntervals.set(message.channel.id, { interval, cooldownMs });
       return message.reply(`✅ Auto @everyone ping enabled every **${formatCooldown(cooldownMs)}**.`);
     }
@@ -852,13 +861,21 @@ client.on('messageCreate', async (message) => {
       if (!userMention || !cooldownStr) return message.reply('Usage: `!autopinguser enable @user <cooldown>`');
       const userId = userMention.replace(/[<@!>]/g, '');
       let targetUser;
-      try { targetUser = await message.guild.members.fetch(userId); } catch { return message.reply('❌ Could not find that user.'); }
+      try {
+        targetUser = await message.guild.members.fetch(userId);
+      } catch {
+        return message.reply('❌ Could not find that user.');
+      }
       const cooldownMs = parseCooldown(cooldownStr);
       if (!cooldownMs) return message.reply('❌ Invalid cooldown.');
       if (userPingIntervals.has(message.channel.id)) clearInterval(userPingIntervals.get(message.channel.id).interval);
       const interval = setInterval(async () => {
-        try { const ping = await message.channel.send(`<@${userId}>`); setTimeout(() => ping.delete().catch(() => {}), 500); }
-        catch (e) { console.error(e); }
+        try {
+          const ping = await message.channel.send(`<@${userId}>`);
+          setTimeout(() => ping.delete().catch(() => {}), 500);
+        } catch (e) {
+          console.error(e);
+        }
       }, cooldownMs);
       userPingIntervals.set(message.channel.id, { interval, userId, cooldownMs });
       return message.reply(`✅ Auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}**.`);
@@ -1065,7 +1082,7 @@ client.on('messageCreate', async (message) => {
   if (command === 'rr') {
     if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
 
-    const msgId    = args[0];
+    const msgId = args[0];
     const emojiRaw = args[1];
     const roleName = args.slice(2).join(' ');
 
@@ -1145,8 +1162,8 @@ client.on('messageCreate', async (message) => {
 
     updateSubMessage = {
       messageId: sent.id,
-      channelId:  message.channel.id,
-      guildId:    message.guild.id,
+      channelId: message.channel.id,
+      guildId: message.guild.id,
       emojiKey,
     };
 
@@ -1176,8 +1193,12 @@ client.on('messageReactionAdd', async (reaction, user) => {
   const dbg = (msg) => dataChannel?.send(`[RR DEBUG] ${msg}`).catch(() => {});
 
   if (reaction.partial) {
-    try { await reaction.fetch(); }
-    catch (e) { dbg(`Failed to fetch partial reaction: ${e}`); return; }
+    try {
+      await reaction.fetch();
+    } catch (e) {
+      dbg(`Failed to fetch partial reaction: ${e}`);
+      return;
+    }
   }
 
   const msgId = reaction.message.id;
@@ -1216,9 +1237,12 @@ client.on('messageReactionAdd', async (reaction, user) => {
   dbg(`Found role ID: ${roleId} — attempting to add to user ${user.id}`);
 
   try {
-    const guild  = reaction.message.guild;
+    const guild = reaction.message.guild;
     const member = await guild.members.fetch(user.id).catch(() => null);
-    if (!member) { dbg(`Could not fetch member ${user.id}`); return; }
+    if (!member) {
+      dbg(`Could not fetch member ${user.id}`);
+      return;
+    }
     await member.roles.add(roleId)
       .then(() => dbg(`Successfully added role ${roleId} to ${user.id}`))
       .catch(e => dbg(`Failed to add role: ${e}`));
@@ -1230,7 +1254,13 @@ client.on('messageReactionAdd', async (reaction, user) => {
 client.on('messageReactionRemove', async (reaction, user) => {
   if (user.bot) return;
 
-  if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
+  if (reaction.partial) {
+    try {
+      await reaction.fetch();
+    } catch {
+      return;
+    }
+  }
 
   const msgId = reaction.message.id;
 
@@ -1252,11 +1282,11 @@ client.on('messageReactionRemove', async (reaction, user) => {
     : reaction.emoji.name;
 
   const mapping = reactionRoles.get(msgId);
-  const roleId  = mapping[emojiKey] || mapping[reaction.emoji.name];
+  const roleId = mapping[emojiKey] || mapping[reaction.emoji.name];
   if (!roleId) return;
 
   try {
-    const guild  = reaction.message.guild;
+    const guild = reaction.message.guild;
     const member = await guild.members.fetch(user.id).catch(() => null);
     if (member) await member.roles.remove(roleId).catch(e => console.error('Failed to remove reaction role:', e));
   } catch (e) {
