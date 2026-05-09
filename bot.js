@@ -745,7 +745,7 @@ client.on('messageCreate', async (message) => {
     const statusMsg = await message.reply(`⏳ Starting ${postCount} posts with ${formatCooldown(delayMs)} delay...`);
 
     try {
-      execSync('git pull', { cwd: XPOSTER_PATH });
+   
 
       await statusMsg.edit('⏳ Running poster...');
 
