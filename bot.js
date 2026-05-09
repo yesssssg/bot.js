@@ -796,7 +796,7 @@ client.on('messageCreate', async (message) => {
 
     return;
   }
-  // ── X LOOP POSTER ─────────────────────────────────────────────
+ // ── X LOOP POSTER ─────────────────────────────────────────────
 if (command === 'startloop') {
   if (!requireAdmin(message)) return message.reply('❌ Admin only.');
 
@@ -806,24 +806,26 @@ if (command === 'startloop') {
   const status = await message.reply(`🚀 Starting loop — every **${delay}** seconds...`);
 
   try {
-    const { startLoop } = await import('./xloop.mjs');
+    const { startLoop } = await import('./xposter/xloop.mjs');   // ← Updated path
     await startLoop(delay);
   } catch (e) {
     console.error(e);
-    status.edit('❌ Failed to start loop.');
+    await status.edit('❌ Failed to start loop.');
   }
+  return;
 }
 
 if (command === 'stoploop') {
   if (!requireAdmin(message)) return message.reply('❌ Admin only.');
   
   try {
-    const { stopLoop } = await import('./xloop.mjs');
+    const { stopLoop } = await import('./xposter/xloop.mjs');   // ← Updated path
     stopLoop();
     await message.reply('⛔ Looping stopped.');
   } catch (e) {
     await message.reply('❌ Failed to stop loop.');
   }
+  return;
 }
   // ── !disable ──────────────────────────────────────────────────────────────
   if (command === 'disable') {
