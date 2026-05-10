@@ -6,11 +6,10 @@ import path from 'path';
 let browser = null;
 let page = null;
 let isRunning = false;
-let lastImage = null; // Memory to prevent back-to-back duplicates
+let lastImage = null;
 
 const X_AUTH_TOKEN = process.env.X_AUTH_TOKEN;
 
-// Helper to get a random item that ISN'T the last one used
 const getCycledItem = (arr, lastItem) => {
   if (arr.length <= 1) return arr[0];
   let newItem = arr[Math.floor(Math.random() * arr.length)];
@@ -53,15 +52,14 @@ async function postToX() {
   
   const selectedTitle = titles[Math.floor(Math.random() * titles.length)];
   const selectedImage = getCycledItem(images, lastImage);
-  lastImage = selectedImage; // Store for next time
+  lastImage = selectedImage;
   
   const tempPath = `/tmp/img_${Date.now()}.jpg`;
 
   try {
     await initBrowser();
-    console.log(`[LOOP] Posting: "${selectedTitle.substring(0, 20)}..."`);
-    
     await downloadImage(selectedImage, tempPath);
+    console.log(`[LOOP] Selected Image: ${selectedImage}`);
 
     await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 60000 });
     
@@ -70,30 +68,41 @@ async function postToX() {
     await page.keyboard.press('Escape');
     await page.click(postBtn, { force: true });
 
+    // 1. UPLOAD IMAGE
     const fileInput = 'input[data-testid="fileInput"]';
     await page.waitForSelector(fileInput, { state: 'attached', timeout: 15000 });
     const handle = await page.$(fileInput);
-    
-    // Safety: ensure it's always using an image
-    if (!handle) throw new Error("File input not found - cannot upload image.");
-    
     await handle.setInputFiles(tempPath);
-    console.log("[LOOP] Image attached.");
+    
+    // CRITICAL: Wait for the image preview to show up in the compose box
+    console.log("[LOOP] Waiting for image preview...");
+    await page.waitForSelector('div[data-testid="attachments"] img', { timeout: 20000 });
 
+    // 2. TYPE TITLE (with prefix fix)
     const textBox = 'div[data-testid="tweetTextarea_0"], div[role="textbox"]';
     await page.waitForSelector(textBox, { timeout: 15000 });
     await page.click(textBox, { force: true });
-    await page.keyboard.type(selectedTitle, { delay: 50 });
+    
+    // Ensure the cursor is at the very start and box is focused
+    await page.keyboard.press('Control+A');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type(selectedTitle, { delay: 100 }); 
 
+    // 3. FINAL SUBMIT
     const submitBtn = 'button[data-testid="tweetButton"]';
-    await page.waitForTimeout(4000); // Wait for image processing
+    // Make sure button is enabled (not greyed out)
+    await page.waitForFunction((sel) => {
+      const btn = document.querySelector(sel);
+      return btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+    }, submitBtn, { timeout: 15000 });
+
     await page.click(submitBtn, { force: true });
 
-    console.log(`[LOOP] ✅ Successfully posted.`);
-    await page.waitForTimeout(3000); 
+    console.log(`[LOOP] ✅ Success: Posted with image!`);
+    await page.waitForTimeout(4000); 
     
   } catch (err) {
-    console.error("[LOOP] ❌ Error during post logic:", err.message);
+    console.error("[LOOP] ❌ Error:", err.message);
   } finally {
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
     if (browser) await browser.close();
@@ -105,29 +114,21 @@ async function postToX() {
 export async function startLoop(delaySeconds = 60) {
   if (isRunning) return;
   isRunning = true;
-  
-  // Convert delay to milliseconds
   const msDelay = delaySeconds * 1000;
-  console.log(`[LOOP] 🔄 STARTED - Frequency: ${delaySeconds} seconds.`);
+  console.log(`[LOOP] 🔄 STARTED - Frequency: ${delaySeconds}s`);
 
   const loop = async () => {
     if (!isRunning) return;
-    
     const startTime = Date.now();
-    await postToX(); // Do the work
-    const endTime = Date.now();
-    
-    // Calculate how long the post took and subtract it from the delay 
-    // to keep the timing as accurate as possible.
-    const timeSpent = endTime - startTime;
-    const remainingDelay = Math.max(0, msDelay - timeSpent);
+    await postToX();
+    const timeSpent = Date.now() - startTime;
+    const nextTick = Math.max(1000, msDelay - timeSpent);
 
     if (isRunning) {
-        console.log(`[LOOP] Waiting ${remainingDelay / 1000}s until next post...`);
-        setTimeout(loop, remainingDelay);
+        console.log(`[LOOP] Next post in ${Math.round(nextTick/1000)}s`);
+        setTimeout(loop, nextTick);
     }
   };
-
   loop();
 }
 
