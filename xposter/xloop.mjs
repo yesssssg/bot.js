@@ -34,7 +34,7 @@ const postTitles = [ "SOPHIE RAIN BARES ALL: HER MOST INTIMATE LEAK VIDEO NOW ON
 
 "THE SHOCKING SOPHIE RAIN LEAK THAT WILL MAKE YOUR JAW DROP - FULL VIDEO IN DISCORD👇 discord.gg/23mMXGstnT" ];
 // Put the exact name of your image file here (must be in the xposter folder)
-const STATIC_IMAGE_NAME = "image.jpg"; 
+const STATIC_IMAGE_NAME = "IMG_1822.jpeg"; 
 // ----------------------------
 
 async function initBrowser() {
