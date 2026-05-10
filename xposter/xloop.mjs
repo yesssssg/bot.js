@@ -12,13 +12,27 @@ let interval = null;
 const X_AUTH_TOKEN = process.env.X_AUTH_TOKEN; 
 
 // --- EDIT YOUR CONTENT HERE ---
-const postTitles = [
-  "Check out this first update! 🔥",
-  "Look at this cool graphic 🚀",
-  "Automated posting is easy with Gemini 🤖",
-  "Looping back to the start! ✨"
-];
 
+
+const postTitles = [ "SOPHIE RAIN BARES ALL: HER MOST INTIMATE LEAK VIDEO NOW ON DISCORD👇 discord.gg/23mMXGstnT",
+
+"THE SOPHIE RAIN LEAK THAT WILL CHANGE EVERYTHING - FULL VIDEO IN DISCORD👇 discord.gg/23mMXGstnT",
+
+"SOPHIE RAIN'S UNSEEN MOMENTS - FULL LEAK VIDEO AVAILABLE ON DISCORD👇 discord.gg/23mMXGstnT",
+
+"SOPHIE RAIN'S ULTIMATE LEAK - WATCH THE FULL VIDEO ON DISCORD👇 discord.gg/23mMXGstnT",
+
+"THE SCANDALOUS SOPHIE RAIN LEAK YOU WON'T WANT TO MISS - FULL VIDEO IN DISCORD👇 discord.gg/23mMXGstnT",
+
+"SOPHIE RAIN'S NIKE PRO LEAK UNCOVERED IN DISCORD👇 discord.gg/23mMXGstnT",
+
+"THE WAIT IS OVER: SOPHIE RAIN'S FULL LEAK VIDEO IS NOW LIVE ON DISCORD👇 discord.gg/23mMXGstnT",
+
+"SOPHIE RAIN'S HIDDEN ASSETS EXPOSED IN DISCORD👇 discord.gg/23mMXGstnT",
+
+"SOPHIE RAIN'S LEAK OF THE CENTURY - WATCH THE FULL VIDEO ON DISCORD👇 discord.gg/23mMXGstnT",
+
+"THE SHOCKING SOPHIE RAIN LEAK THAT WILL MAKE YOUR JAW DROP - FULL VIDEO IN DISCORD👇 discord.gg/23mMXGstnT" ];
 // Put the exact name of your image file here (must be in the xposter folder)
 const STATIC_IMAGE_NAME = "image.jpg"; 
 // ----------------------------
