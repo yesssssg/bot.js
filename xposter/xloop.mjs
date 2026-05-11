@@ -9,6 +9,8 @@ const X_AUTH_TOKEN_RAW = process.env.X_AUTH_TOKEN || "";
 const POST_TITLES_RAW = process.env.POST_TITLES || "";
 const IMAGE_URL_RAW = process.env.IMAGE_URL || "";
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 const getCycledItem = (arr, lastItem) => {
   if (arr.length <= 1) return arr[0];
   let newItem = arr[Math.floor(Math.random() * arr.length)];
@@ -18,59 +20,40 @@ const getCycledItem = (arr, lastItem) => {
   return newItem;
 };
 
-// --- ADVANCED DOWNLOADER (Bypasses "Blurry" Thumbnail Links) ---
 async function downloadImage(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    
     const options = {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
         'Referer': 'https://x.com/' 
-      },
-      timeout: 20000 
+      }
     };
-
     https.get(url, options, (res) => {
       if (res.statusCode !== 200) return reject(new Error(`Download failed: ${res.statusCode}`));
       res.pipe(file);
-      file.on('finish', () => {
-        file.close();
-        const stats = fs.statSync(dest);
-        if (stats.size < 10240) console.warn(`[SYSTEM] Warning: Small image file (${(stats.size/1024).toFixed(2)}KB).`);
-        resolve();
-      });
+      file.on('finish', () => { file.close(); resolve(); });
     }).on('error', (err) => { fs.unlink(dest, () => reject(err)); });
   });
 }
 
 async function postForAccount(token, titles, images, accId, delayMs) {
   const accountKey = `acc_${accId}`;
-  const tempPath = `/tmp/img_${accId}_${Date.now()}.jpg`;
   
-  const run = async () => {
-    if (!isRunning) return;
+  while (isRunning) {
     const startTime = Date.now();
+    const tempPath = `/tmp/img_${accId}_${Date.now()}.png`; // Force PNG for sharpness
     let browser = null;
 
     try {
-      console.log(`[ACC-${accId}] 🚀 Cycle Start. Initializing HD Browser...`);
+      console.log(`[ACC-${accId}] 🚀 Cycle Start. Initializing HD session...`);
       
       browser = await chromium.launch({ 
         headless: true, 
-        args: [
-          '--no-sandbox', 
-          '--disable-setuid-sandbox', 
-          '--disable-dev-shm-usage',
-          '--single-process', 
-          '--no-zygote'
-        ] 
+        args: ['--no-sandbox', '--disable-dev-shm-usage', '--single-process'] 
       });
 
-      // --- VIEWPORT INJECTION (Forces X to Desktop HD Mode) ---
       const context = await browser.newContext({
         viewport: { width: 1920, height: 1080 },
         deviceScaleFactor: 2, 
@@ -83,13 +66,10 @@ async function postForAccount(token, titles, images, accId, delayMs) {
 
       const page = await context.newPage();
 
-      // --- RESOURCE BLOCKER (Prevents 60s Timeouts) ---
+      // Block fonts and ads to save RAM
       await page.route('**/*', (route) => {
         const type = route.request().resourceType();
-        const url = route.request().url();
         if (['font', 'media'].includes(type)) return route.abort();
-        if (type === 'image' && !url.includes('twimg.com')) return route.abort();
-        if (url.includes('analytics') || url.includes('ads')) return route.abort();
         route.continue();
       });
 
@@ -99,62 +79,59 @@ async function postForAccount(token, titles, images, accId, delayMs) {
 
       await downloadImage(selectedImage, tempPath);
 
-      // 1. Direct Navigation
-      console.log(`[ACC-${accId}] Navigating to Compose...`);
+      console.log(`[ACC-${accId}] Opening Compose...`);
       await page.goto('https://x.com/compose/post', { waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.waitForTimeout(7000);
 
-      // 2. Upload
+      // Uploading
       const fileInput = 'input[data-testid="fileInput"]';
       await page.waitForSelector(fileInput, { state: 'attached' });
       await (await page.$(fileInput)).setInputFiles(tempPath);
       
       console.log(`[ACC-${accId}] Uploading HD Image...`);
       await page.waitForSelector('div[data-testid="attachments"] img', { timeout: 40000 });
-      
-      // WAIT FOR PROCESSING (Crucial for HD)
-      await page.waitForTimeout(5000); 
+      await page.waitForTimeout(6000); // Wait for X to generate high-res IDs
 
-      // 3. Text Input (Focus/Fill bypasses pointer errors)
+      // Fill Text
       const textBox = 'div[data-testid="tweetTextarea_0"], div[role="textbox"]';
       await page.waitForSelector(textBox);
       await page.focus(textBox);
       await page.fill(textBox, selectedTitle);
       
-      // 4. Submit with Fallback
+      // Submit
       const submitBtn = 'button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]';
-      try {
-        await page.waitForFunction((sel) => {
-          const btn = document.querySelector(sel);
-          return btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
-        }, submitBtn, { timeout: 15000 });
-      } catch (e) {
-        console.log(`[ACC-${accId}] Button state stuck, forcing click...`);
-      }
+      await page.waitForFunction((sel) => {
+        const btn = document.querySelector(sel);
+        return btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+      }, submitBtn, { timeout: 20000 });
 
-      await page.click(submitBtn, { force: true });
-      
-      console.log(`[ACC-${accId}] Post sent. Finalizing...`);
-      await page.waitForTimeout(12000); 
-      console.log(`[ACC-${accId}] ✅ Success!`);
+      await page.click(submitBtn);
+      console.log(`[ACC-${accId}] Post clicked. Verifying...`);
+
+      // VERIFICATION: Check if the compose box actually disappears or toast appears
+      try {
+        await Promise.race([
+          page.waitForSelector('div[data-testid="toast"]', { timeout: 15000 }),
+          page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 15000 })
+        ]);
+        console.log(`[ACC-${accId}] ✅ Success! Post confirmed by X.`);
+      } catch (e) {
+        console.warn(`[ACC-${accId}] ⚠️ Post verification timed out. It might be shadow-hidden.`);
+      }
 
     } catch (err) {
       console.error(`[ACC-${accId}] ❌ Error:`, err.message);
     } finally {
-      // FULL CLEANUP (Resets RAM to 0)
       if (browser) await browser.close().catch(() => {});
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-      
-      if (isRunning) {
-        const timeSpent = Date.now() - startTime;
-        const nextTick = Math.max(30000, delayMs - timeSpent);
-        console.log(`[ACC-${accId}] RAM Reset. Next post in ${Math.round(nextTick/1000)}s.`);
-        setTimeout(run, nextTick);
-      }
     }
-  };
 
-  run();
+    const timeSpent = Date.now() - startTime;
+    const nextTick = Math.max(60000, delayMs - timeSpent); 
+    
+    console.log(`[ACC-${accId}] 😴 Sleeping for ${Math.round(nextTick/1000)}s.`);
+    await sleep(nextTick); 
+  }
 }
 
 export async function startLoop(delaySeconds = 60) {
@@ -166,14 +143,13 @@ export async function startLoop(delaySeconds = 60) {
   const images = IMAGE_URL_RAW.split('|').map(i => i.trim());
 
   tokens.forEach((token, index) => {
-    // 60s stagger to prevent CPU spikes
     setTimeout(() => {
       postForAccount(token.trim(), titles, images, index + 1, delaySeconds * 1000);
-    }, index * 60000);
+    }, index * 60000); 
   });
 }
 
 export function stopLoop() {
   isRunning = false;
-  console.log("[SYSTEM] Shutdown initiated.");
+  console.log("[SYSTEM] Shutting down loop...");
 }
