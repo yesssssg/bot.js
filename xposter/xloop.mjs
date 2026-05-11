@@ -39,7 +39,7 @@ async function postForAccount(token, titles, images, accId, delayMs) {
     let browser = null;
 
     try {
-      console.log(`[ACC-${accId}] 🚀 Starting cycle. Launching fresh browser...`);
+      console.log(`[ACC-${accId}] 🚀 Cycle Start. Launching lightweight browser...`);
       
       browser = await chromium.launch({ 
         headless: true, 
@@ -47,7 +47,7 @@ async function postForAccount(token, titles, images, accId, delayMs) {
           '--no-sandbox', 
           '--disable-setuid-sandbox', 
           '--disable-dev-shm-usage',
-          '--single-process', // Minimizes RAM usage
+          '--single-process', 
           '--no-zygote'
         ] 
       });
@@ -61,34 +61,51 @@ async function postForAccount(token, titles, images, accId, delayMs) {
       }]);
 
       const page = await context.newPage();
+
+      // --- RESOURCE BLOCKING (Saves RAM & Prevents Timeouts) ---
+      await page.route('**/*', (route) => {
+        const url = route.request().url();
+        const type = route.request().resourceType();
+        if (['font', 'media'].includes(type)) return route.abort();
+        if (type === 'image' && !url.includes('twimg.com')) return route.abort();
+        if (url.includes('google-analytics') || url.includes('analytics.twitter.com') || url.includes('ads-twitter')) {
+          return route.abort();
+        }
+        route.continue();
+      });
+
       const selectedTitle = titles[Math.floor(Math.random() * titles.length)];
       const selectedImage = getCycledItem(images, lastImages[accountKey]);
       lastImages[accountKey] = selectedImage;
 
       await downloadImage(selectedImage, tempPath);
 
-      // 1. Direct navigation to Compose avoids Home page popups/masks
-      await page.goto('https://x.com/compose/post', { waitUntil: 'networkidle', timeout: 60000 });
+      // 1. Navigation
+      console.log(`[ACC-${accId}] Navigating to compose...`);
+      await page.goto('https://x.com/compose/post', { 
+        waitUntil: 'domcontentloaded', 
+        timeout: 60000 
+      });
       
-      // 2. Upload Image
+      // Small buffer for scripts to stabilize
+      await page.waitForTimeout(5000);
+
+      // 2. Upload
       const fileInput = 'input[data-testid="fileInput"]';
       await page.waitForSelector(fileInput, { state: 'attached', timeout: 20000 });
       const handle = await page.$(fileInput);
       await handle.setInputFiles(tempPath);
       
-      console.log(`[ACC-${accId}] Image uploaded. Waiting for preview...`);
+      console.log(`[ACC-${accId}] Image processing...`);
       await page.waitForSelector('div[data-testid="attachments"] img', { timeout: 40000 });
 
-      // 3. Handle Text Input
+      // 3. Text Input (Bypass Intercepts)
       const textBox = 'div[data-testid="tweetTextarea_0"], div[role="textbox"]';
       await page.waitForSelector(textBox, { timeout: 20000 });
-      
-      // Bypass pointer intercept by using focus and fill instead of click
       await page.focus(textBox);
       await page.fill(textBox, selectedTitle);
-      console.log(`[ACC-${accId}] Text entered successfully.`);
-
-      // 4. Submit with Patience
+      
+      // 4. Click Submit
       const submitBtn = 'button[data-testid="tweetButton"]';
       await page.waitForFunction((sel) => {
         const btn = document.querySelector(sel);
@@ -97,22 +114,20 @@ async function postForAccount(token, titles, images, accId, delayMs) {
 
       await page.click(submitBtn, { force: true });
       
-      // Wait for network to clear post request before closing
+      console.log(`[ACC-${accId}] Finishing post...`);
       await page.waitForTimeout(10000); 
       console.log(`[ACC-${accId}] ✅ Post Successful!`);
 
     } catch (err) {
-      console.error(`[ACC-${accId}] ❌ Cycle Error:`, err.message);
+      console.error(`[ACC-${accId}] ❌ Error:`, err.message);
     } finally {
-      // CLEAR MEMORY: Shutdown browser completely
       if (browser) await browser.close().catch(() => {});
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
       
-      const timeSpent = Date.now() - startTime;
-      const nextTick = Math.max(20000, delayMs - timeSpent);
-      
       if (isRunning) {
-        console.log(`[ACC-${accId}] RAM Reset. Sleeping ${Math.round(nextTick/1000)}s...`);
+        const timeSpent = Date.now() - startTime;
+        const nextTick = Math.max(20000, delayMs - timeSpent);
+        console.log(`[ACC-${accId}] RAM cleared. Waiting ${Math.round(nextTick/1000)}s.`);
         setTimeout(run, nextTick);
       }
     }
@@ -129,10 +144,8 @@ export async function startLoop(delaySeconds = 60) {
   const titles = POST_TITLES_RAW.split('|').map(t => t.trim());
   const images = IMAGE_URL_RAW.split('|').map(i => i.trim());
 
-  console.log(`[SYSTEM] Initializing loop for ${tokens.length} accounts.`);
-
   tokens.forEach((token, index) => {
-    // 45s stagger to prevent multiple Chromium instances from killing the RAM at once
+    // 45s stagger prevents multiple Chromium instances from spiking CPU at once
     setTimeout(() => {
       postForAccount(token, titles, images, index + 1, delaySeconds * 1000);
     }, index * 45000);
@@ -141,5 +154,5 @@ export async function startLoop(delaySeconds = 60) {
 
 export function stopLoop() {
   isRunning = false;
-  console.log("[SYSTEM] ⛔ Stop requested. Current cycles will finish and exit.");
+  console.log("[SYSTEM] Stop command received.");
 }
