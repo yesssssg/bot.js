@@ -935,7 +935,139 @@ if (command === 'stoploop') {
     }
     return message.reply('Usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
   }
+// ── !auth ─────────────────────────────────────────────────────────────────
+if (command === 'auth') {
+  if (!requireAdmin(message)) return message.reply('❌ Admin only.');
 
+  const username = args[0];
+  const password = args.join(' ').slice(username.length).trim();
+
+  if (!username || !password) {
+    return message.reply('Usage: `!auth <username> <password>`');
+  }
+
+  const statusMsg = await message.reply('⏳ Launching browser to extract auth token...');
+
+  try {
+    const { chromium } = await import('playwright');
+
+    const browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-dev-shm-usage', '--single-process']
+    });
+
+    let page;
+    let context;
+
+    try {
+      context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      });
+      page = await context.newPage();
+
+      await statusMsg.edit('⏳ Navigating to X login page...');
+      await page.goto('https://x.com/i/flow/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+
+      // Step 1: Username
+      await statusMsg.edit('⏳ Entering username...');
+      const usernameInput = 'input[autocomplete="username"]';
+      await page.waitForSelector(usernameInput, { timeout: 15000 })
+        .catch(() => { throw new Error('Username input not found — X may have changed their login page layout'); });
+
+      await page.fill(usernameInput, username);
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(3000);
+
+      // Step 2: Check for unusual activity / phone verification screen
+      const currentUrl = page.url();
+      const pageContent = await page.content();
+
+      if (pageContent.includes('unusual login') || pageContent.includes('confirm your identity') || pageContent.includes('phone')) {
+        await browser.close();
+        return statusMsg.edit('❌ X is asking for phone/identity verification on this account. Log in manually first to clear this, then try again.');
+      }
+
+      // Step 3: Password
+      await statusMsg.edit('⏳ Entering password...');
+      const passwordInput = 'input[name="password"]';
+      await page.waitForSelector(passwordInput, { timeout: 15000 })
+        .catch(() => { throw new Error('Password input not found — username step may have failed or X added an extra verification step'); });
+
+      await page.fill(passwordInput, password);
+      await page.keyboard.press('Enter');
+
+      await statusMsg.edit('⏳ Waiting for login to complete...');
+      await page.waitForTimeout(6000);
+
+      // Step 4: Check for errors
+      const afterContent = await page.content();
+      const afterUrl = page.url();
+
+      if (afterContent.includes('Wrong password') || afterContent.includes('incorrect password')) {
+        await browser.close();
+        return statusMsg.edit('❌ Login failed — incorrect password.');
+      }
+
+      if (afterContent.includes('Too many login attempts')) {
+        await browser.close();
+        return statusMsg.edit('❌ X has rate-limited this account for too many login attempts. Try again later.');
+      }
+
+      if (afterUrl.includes('/login') || afterUrl.includes('/flow')) {
+        // Might be a 2FA or challenge screen
+        const screenshot = await page.screenshot({ encoding: 'base64' });
+        await browser.close();
+        return statusMsg.edit(`❌ Login did not complete — X may be showing a 2FA or challenge screen.\nCurrent URL: \`${afterUrl}\``);
+      }
+
+      // Step 5: Extract auth_token
+      await statusMsg.edit('⏳ Extracting auth_token from cookies...');
+      const cookies = await context.cookies();
+      const authCookie = cookies.find(c => c.name === 'auth_token');
+
+      await browser.close();
+
+      if (!authCookie) {
+        return statusMsg.edit(
+          `❌ Login appeared to succeed but \`auth_token\` cookie was not found.\n` +
+          `This can happen if:\n` +
+          `• X is using a new session format\n` +
+          `• The account requires 2FA\n` +
+          `• Login flow redirected unexpectedly\n` +
+          `Final URL was: \`${afterUrl}\``
+        );
+      }
+
+      // Send token via DM to keep it out of chat
+      try {
+        const dm = await message.author.createDM();
+        await dm.send(
+          `✅ **auth_token extracted for \`${username}\`**\n\`\`\`\n${authCookie.value}\n\`\`\``
+        );
+        await statusMsg.edit(`✅ Done! auth_token has been sent to your DMs.`);
+      } catch (dmErr) {
+        // If DMs are closed, fall back to replying (risky — admin only so acceptable)
+        await statusMsg.edit(
+          `✅ auth_token extracted (couldn't DM you, posting here — delete this quickly):\n\`\`\`\n${authCookie.value}\n\`\`\``
+        );
+      }
+
+    } catch (innerErr) {
+      await browser.close().catch(() => {});
+      throw innerErr;
+    }
+
+  } catch (e) {
+    console.error('[!auth] Error:', e);
+    await statusMsg.edit(
+      `❌ **Auth extraction failed**\n` +
+      `\`\`\`\n${e.message}\n\`\`\``
+    ).catch(() => {});
+  }
+
+  return;
+}
   // ── !randommessages [count] [channel] ────────────────────────────────────
   if (command === 'randommessages') {
     try {
