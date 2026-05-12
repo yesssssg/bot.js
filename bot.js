@@ -1017,38 +1017,62 @@ if (command === 'stoploop') {
       await statusMsg.edit('⏳ Loading X login page...');
       try {
         await page.goto('https://x.com/i/flow/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(3000);
       } catch (e) {
         await sendScreenshot('Failed to load login page');
         throw new Error(`Page load failed: ${e.message}`);
       }
-      await page.waitForTimeout(3000);
 
-      // ── Step 2: Username ──
-      await statusMsg.edit('⏳ Entering username...');
-      try {
-        await page.waitForSelector('input[autocomplete="username"]', { timeout: 15000 });
-      } catch (e) {
-        await sendScreenshot('Username field not found');
-        throw new Error(`Username field not found: ${e.message}`);
+      // ── Step 2: Username — try every possible selector ──
+      await statusMsg.edit('⏳ Looking for username field...');
+
+      const usernameSelectors = [
+        'input[autocomplete="username"]',
+        'input[name="text"]',
+        'input[type="text"]',
+        'input[placeholder*="username"]',
+        'input[placeholder*="email"]',
+        'input[placeholder*="Phone"]',
+      ];
+
+      let usernameField = null;
+      for (const sel of usernameSelectors) {
+        try {
+          await page.waitForSelector(sel, { timeout: 5000 });
+          usernameField = sel;
+          break;
+        } catch {}
       }
 
-      await page.click('input[autocomplete="username"]');
-      await page.waitForTimeout(300);
-      await page.type('input[autocomplete="username"]', username, { delay: 80 });
-      await page.waitForTimeout(800);
+      if (!usernameField) {
+        await sendScreenshot('Could not find any username input field');
+        throw new Error('Could not find username input field with any known selector');
+      }
 
-      try {
-        await page.click('[data-testid="LoginForm_Login_Button"]');
-      } catch {
-        try {
-          await page.click('div[role="button"]:has-text("Next")');
-        } catch {
-          await page.keyboard.press('Enter');
-        }
+      await statusMsg.edit(`⏳ Found username field, typing...`);
+      await page.click(usernameField);
+      await page.waitForTimeout(500);
+      // Clear field first then type slowly
+      await page.fill(usernameField, '');
+      await page.type(usernameField, username, { delay: 100 });
+      await page.waitForTimeout(1000);
+      await sendScreenshot('After typing username');
+
+      // Click Next button
+      await statusMsg.edit('⏳ Clicking Next...');
+      const nextClicked = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('div[role="button"], button'));
+        const next = buttons.find(b => b.innerText?.trim() === 'Next');
+        if (next) { next.click(); return true; }
+        return false;
+      });
+
+      if (!nextClicked) {
+        await page.keyboard.press('Enter');
       }
       await page.waitForTimeout(4000);
 
-      // ── Step 3: Main loop — handle every screen X throws ──
+      // ── Step 3: Main loop ──
       let attempts = 0;
       const MAX_ATTEMPTS = 10;
 
@@ -1059,7 +1083,7 @@ if (command === 'stoploop') {
 
         await statusMsg.edit(`⏳ Step ${attempts} — URL: \`${url}\``);
 
-        // ✅ Done
+        // ✅ Success
         if (url.includes('/home') || url === 'https://x.com/') break;
 
         // Password screen
@@ -1067,56 +1091,40 @@ if (command === 'stoploop') {
           await statusMsg.edit('⏳ Entering password...');
           await page.fill('input[name="password"]', password);
           await page.waitForTimeout(500);
-          try {
-            await page.click('[data-testid="LoginForm_Login_Button"]');
-          } catch {
-            try {
-              await page.click('div[role="button"]:has-text("Log in")');
-            } catch {
-              await page.keyboard.press('Enter');
-            }
-          }
+          const loggedIn = await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('div[role="button"], button'));
+            const btn = buttons.find(b => b.innerText?.trim() === 'Log in');
+            if (btn) { btn.click(); return true; }
+            return false;
+          });
+          if (!loggedIn) await page.keyboard.press('Enter');
           await page.waitForTimeout(5000);
           continue;
         }
 
         // Wrong password
         if (content.includes('Wrong password') || content.includes('incorrect password')) {
-          await sendScreenshot('Wrong password screen');
+          await sendScreenshot('Wrong password');
           await browser.close();
           return statusMsg.edit('❌ Incorrect password.');
         }
 
         // Rate limited
         if (content.includes('Too many') || content.includes('rate limit')) {
-          await sendScreenshot('Rate limit screen');
+          await sendScreenshot('Rate limited');
           await browser.close();
           return statusMsg.edit('❌ Too many login attempts. Try again later.');
         }
 
-        // Figure out what X wants and ask user
-        let prompt = '⚠️ X is showing an extra screen. ';
-        let tookScreenshot = false;
+        // Challenge screen — screenshot always, then ask
+        await sendScreenshot(`Challenge screen — step ${attempts}`);
 
-        if (content.includes('phone')) {
-          prompt += '📱 Looks like it wants your **phone number**. Reply with it now:';
-        } else if (content.includes('email')) {
-          prompt += '📧 Looks like it wants your **email**. Reply with it now:';
-        } else if (content.includes('verification code') || content.includes('Enter the code') || content.includes('SMS')) {
-          prompt += '💬 It sent you an **SMS code**. Reply with the code:';
-        } else if (content.includes('Two-factor') || content.includes('2FA') || content.includes('authentication app')) {
-          prompt += '🔐 It wants your **2FA code**. Reply with it:';
-        } else if (content.includes('name="text"') || content.includes('ocfEnterTextTextInput')) {
-          prompt += 'It wants you to enter something. Reply with what it\'s asking for:';
-        } else {
-          await sendScreenshot(`Unknown screen — step ${attempts}, URL: ${url}`);
-          tookScreenshot = true;
-          prompt += 'Unknown screen — screenshot sent above. Reply with what it\'s asking for, or type `cancel` to abort:';
-        }
-
-        if (!tookScreenshot) {
-          await sendScreenshot(`X challenge screen — step ${attempts}`);
-        }
+        let prompt = '⚠️ X is showing a challenge. Screenshot sent above. ';
+        if (content.includes('phone')) prompt += '📱 Reply with your **phone number**:';
+        else if (content.includes('email')) prompt += '📧 Reply with your **email**:';
+        else if (content.includes('verification code') || content.includes('Enter the code') || content.includes('SMS')) prompt += '💬 Reply with the **SMS code**:';
+        else if (content.includes('Two-factor') || content.includes('2FA') || content.includes('authentication app')) prompt += '🔐 Reply with your **2FA code**:';
+        else prompt += 'Reply with whatever it\'s asking for, or type `cancel` to abort:';
 
         const response = await askUser(prompt);
 
@@ -1125,28 +1133,28 @@ if (command === 'stoploop') {
           return statusMsg.edit('❌ Cancelled.');
         }
 
-        await statusMsg.edit('⏳ Submitting your response...');
+        await statusMsg.edit('⏳ Submitting response...');
         const filled = await findAndFill(response);
 
         if (!filled) {
-          await sendScreenshot('Could not find input field to fill');
+          await sendScreenshot('No input field found to fill');
           await browser.close();
-          return statusMsg.edit('❌ Could not find an input field to type into. See screenshot above.');
+          return statusMsg.edit('❌ Could not find an input field. See screenshot above.');
         }
 
         await page.keyboard.press('Enter');
         await page.waitForTimeout(4000);
       }
 
-      // ── Step 4: Verify we landed on home ──
+      // ── Step 4: Final check ──
       const finalUrl = page.url();
       if (!finalUrl.includes('/home') && finalUrl !== 'https://x.com/') {
         await sendScreenshot('Login did not complete');
         await browser.close();
-        return statusMsg.edit(`❌ Login did not complete. Final URL: \`${finalUrl}\` — see screenshot above.`);
+        return statusMsg.edit(`❌ Login did not complete. Final URL: \`${finalUrl}\``);
       }
 
-      // ── Step 5: Grab the token ──
+      // ── Step 5: Extract token ──
       await statusMsg.edit('⏳ Extracting auth_token...');
       const cookies = await context.cookies();
       const authCookie = cookies.find(c => c.name === 'auth_token');
