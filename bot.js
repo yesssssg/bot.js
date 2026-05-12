@@ -934,19 +934,18 @@ if (command === 'stoploop') {
       return message.reply('✅ Auto user ping disabled.');
     }
     return message.reply('Usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
-  }
-// ── !auth ─────────────────────────────────────────────────────────────────
+  }// ── !auth ─────────────────────────────────────────────────────────────────
 if (command === 'auth') {
   if (!requireAdmin(message)) return message.reply('❌ Admin only.');
 
   const username = args[0];
-  const password = args.join(' ').slice(username.length).trim();
+  const password = args.slice(1).join(' ');
 
   if (!username || !password) {
     return message.reply('Usage: `!auth <username> <password>`');
   }
 
-  const statusMsg = await message.reply('⏳ Launching browser to extract auth token...');
+  const statusMsg = await message.reply('⏳ Launching browser...');
 
   try {
     const { chromium } = await import('playwright');
@@ -956,8 +955,7 @@ if (command === 'auth') {
       args: ['--no-sandbox', '--disable-dev-shm-usage', '--single-process']
     });
 
-    let page;
-    let context;
+    let context, page;
 
     try {
       context = await browser.newContext({
@@ -965,91 +963,164 @@ if (command === 'auth') {
       });
       page = await context.newPage();
 
-      await statusMsg.edit('⏳ Navigating to X login page...');
+      // ── Step 1: Load login page ──
+      await statusMsg.edit('⏳ Navigating to X login...');
       await page.goto('https://x.com/i/flow/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(3000);
 
-      // Step 1: Username
+      // ── Step 2: Username ──
       await statusMsg.edit('⏳ Entering username...');
       const usernameInput = 'input[autocomplete="username"]';
       await page.waitForSelector(usernameInput, { timeout: 15000 })
-        .catch(() => { throw new Error('Username input not found — X may have changed their login page layout'); });
-
+        .catch(() => { throw new Error('Username input not found'); });
       await page.fill(usernameInput, username);
       await page.keyboard.press('Enter');
       await page.waitForTimeout(3000);
 
-      // Step 2: Check for unusual activity / phone verification screen
-      const currentUrl = page.url();
-      const pageContent = await page.content();
-
-      if (pageContent.includes('unusual login') || pageContent.includes('confirm your identity') || pageContent.includes('phone')) {
-        await browser.close();
-        return statusMsg.edit('❌ X is asking for phone/identity verification on this account. Log in manually first to clear this, then try again.');
-      }
-
-      // Step 3: Password
+      // ── Step 3: Password ──
       await statusMsg.edit('⏳ Entering password...');
       const passwordInput = 'input[name="password"]';
       await page.waitForSelector(passwordInput, { timeout: 15000 })
-        .catch(() => { throw new Error('Password input not found — username step may have failed or X added an extra verification step'); });
-
+        .catch(() => { throw new Error('Password field not found after username step') });
       await page.fill(passwordInput, password);
       await page.keyboard.press('Enter');
+      await page.waitForTimeout(5000);
 
-      await statusMsg.edit('⏳ Waiting for login to complete...');
-      await page.waitForTimeout(6000);
+      // ── Step 4: Interactive challenge loop ──
+      let attempts = 0;
+      const MAX_ATTEMPTS = 5;
 
-      // Step 4: Check for errors
-      const afterContent = await page.content();
-      const afterUrl = page.url();
+      while (attempts < MAX_ATTEMPTS) {
+        attempts++;
+        const url = page.url();
+        const content = await page.content();
 
-      if (afterContent.includes('Wrong password') || afterContent.includes('incorrect password')) {
-        await browser.close();
-        return statusMsg.edit('❌ Login failed — incorrect password.');
+        // Success — home page reached
+        if (url.includes('/home') || url === 'https://x.com/') {
+          break;
+        }
+
+        // Detect what X is asking for
+        let challengeType = null;
+        let promptText = null;
+
+        if (content.includes('Enter your phone number') || content.includes('phone')) {
+          challengeType = 'phone';
+          promptText = '📱 X is asking for your **phone number**. Reply with it now (e.g. `+1234567890`):';
+        } else if (content.includes('confirm your identity') || content.includes('unusual login')) {
+          challengeType = 'identity';
+          promptText = '🔒 X says **unusual login activity**. It may be asking for your phone or email. Reply with whatever it\'s asking for:';
+        } else if (content.includes('Enter the code') || content.includes('verification code') || content.includes('SMS')) {
+          challengeType = 'sms';
+          promptText = '💬 X sent an **SMS code** to your phone. Reply with the code now:';
+        } else if (content.includes('Two-factor') || content.includes('2FA') || content.includes('authentication app')) {
+          challengeType = '2fa';
+          promptText = '🔐 X is asking for your **2FA authenticator code**. Reply with it now:';
+        } else if (content.includes('Enter your email') || content.includes('email address')) {
+          challengeType = 'email';
+          promptText = '📧 X is asking for your **email address**. Reply with it now:';
+        } else if (content.includes('Wrong password') || content.includes('incorrect')) {
+          await browser.close();
+          return statusMsg.edit('❌ Incorrect password.');
+        } else if (content.includes('Too many')) {
+          await browser.close();
+          return statusMsg.edit('❌ Too many login attempts. Try again later.');
+        } else {
+          // Unknown screen — take screenshot and show URL
+          await browser.close();
+          return statusMsg.edit(
+            `❌ Unknown challenge screen (attempt ${attempts}).\n` +
+            `URL: \`${url}\`\n` +
+            `Try logging in manually once to clear any pending verifications.`
+          );
+        }
+
+        // Ask user in Discord
+        await statusMsg.edit(promptText);
+
+        // Wait for user's reply in the same channel
+        let collected;
+        try {
+          collected = await message.channel.awaitMessages({
+            filter: m => m.author.id === message.author.id,
+            max: 1,
+            time: 120000, // 2 minute timeout
+            errors: ['time']
+          });
+        } catch {
+          await browser.close();
+          return statusMsg.edit('❌ Timed out waiting for your response. Run `!auth` again.');
+        }
+
+        const userResponse = collected.first().content.trim();
+        await collected.first().delete().catch(() => {});
+
+        await statusMsg.edit(`⏳ Submitting ${challengeType} response...`);
+
+        // Find the input field and fill it
+        try {
+          // Try common input selectors for challenge screens
+          const inputSelectors = [
+            'input[name="text"]',
+            'input[data-testid="ocfEnterTextTextInput"]',
+            'input[inputmode="numeric"]',
+            'input[type="tel"]',
+            'input[type="text"]',
+            'input[autocomplete="one-time-code"]',
+          ];
+
+          let filled = false;
+          for (const sel of inputSelectors) {
+            const el = await page.$(sel);
+            if (el) {
+              await el.fill(userResponse);
+              filled = true;
+              break;
+            }
+          }
+
+          if (!filled) {
+            await browser.close();
+            return statusMsg.edit('❌ Could not find the input field on the challenge screen.');
+          }
+
+          await page.keyboard.press('Enter');
+          await page.waitForTimeout(4000);
+
+        } catch (e) {
+          await browser.close();
+          return statusMsg.edit(`❌ Failed to submit challenge response: ${e.message}`);
+        }
       }
 
-      if (afterContent.includes('Too many login attempts')) {
+      // ── Step 5: Extract token ──
+      const finalUrl = page.url();
+      if (!finalUrl.includes('/home') && finalUrl !== 'https://x.com/') {
         await browser.close();
-        return statusMsg.edit('❌ X has rate-limited this account for too many login attempts. Try again later.');
+        return statusMsg.edit(
+          `❌ Login did not complete after all challenge steps.\n` +
+          `Final URL: \`${finalUrl}\``
+        );
       }
 
-      if (afterUrl.includes('/login') || afterUrl.includes('/flow')) {
-        // Might be a 2FA or challenge screen
-        const screenshot = await page.screenshot({ encoding: 'base64' });
-        await browser.close();
-        return statusMsg.edit(`❌ Login did not complete — X may be showing a 2FA or challenge screen.\nCurrent URL: \`${afterUrl}\``);
-      }
-
-      // Step 5: Extract auth_token
-      await statusMsg.edit('⏳ Extracting auth_token from cookies...');
+      await statusMsg.edit('⏳ Extracting auth_token...');
       const cookies = await context.cookies();
       const authCookie = cookies.find(c => c.name === 'auth_token');
 
       await browser.close();
 
       if (!authCookie) {
-        return statusMsg.edit(
-          `❌ Login appeared to succeed but \`auth_token\` cookie was not found.\n` +
-          `This can happen if:\n` +
-          `• X is using a new session format\n` +
-          `• The account requires 2FA\n` +
-          `• Login flow redirected unexpectedly\n` +
-          `Final URL was: \`${afterUrl}\``
-        );
+        return statusMsg.edit('❌ Login succeeded but `auth_token` cookie was not found.');
       }
 
-      // Send token via DM to keep it out of chat
+      // Send to DMs
       try {
         const dm = await message.author.createDM();
-        await dm.send(
-          `✅ **auth_token extracted for \`${username}\`**\n\`\`\`\n${authCookie.value}\n\`\`\``
-        );
-        await statusMsg.edit(`✅ Done! auth_token has been sent to your DMs.`);
-      } catch (dmErr) {
-        // If DMs are closed, fall back to replying (risky — admin only so acceptable)
+        await dm.send(`✅ **auth_token for \`${username}\`:**\n\`\`\`\n${authCookie.value}\n\`\`\``);
+        await statusMsg.edit('✅ Done! auth_token sent to your DMs.');
+      } catch {
         await statusMsg.edit(
-          `✅ auth_token extracted (couldn't DM you, posting here — delete this quickly):\n\`\`\`\n${authCookie.value}\n\`\`\``
+          `✅ Got it (DMs closed, posting here — delete this):\n\`\`\`\n${authCookie.value}\n\`\`\``
         );
       }
 
@@ -1060,10 +1131,7 @@ if (command === 'auth') {
 
   } catch (e) {
     console.error('[!auth] Error:', e);
-    await statusMsg.edit(
-      `❌ **Auth extraction failed**\n` +
-      `\`\`\`\n${e.message}\n\`\`\``
-    ).catch(() => {});
+    await statusMsg.edit(`❌ **Error:** \`${e.message}\``);
   }
 
   return;
