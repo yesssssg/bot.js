@@ -977,14 +977,28 @@ if (command === 'auth') {
       await page.keyboard.press('Enter');
       await page.waitForTimeout(3000);
 
-      // ── Step 3: Password ──
-      await statusMsg.edit('⏳ Entering password...');
-      const passwordInput = 'input[name="password"]';
-      await page.waitForSelector(passwordInput, { timeout: 15000 })
-        .catch(() => { throw new Error('Password field not found after username step') });
-      await page.fill(passwordInput, password);
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(5000);
+     // ── Step 2.5: Handle extra middle step (X sometimes asks to confirm username/email/phone) ──
+      await page.waitForTimeout(2000);
+      const midContent = await page.content();
+
+      const hasMidStep =
+        !midContent.includes('name="password"') &&
+        (midContent.includes('Enter your phone') ||
+         midContent.includes('Enter your email') ||
+         midContent.includes('name="text"') ||
+         midContent.includes('ocfEnterTextTextInput'));
+
+      if (hasMidStep) {
+        let midPrompt = '⚠️ X added an extra step before the password. Reply with what it\'s asking for:';
+        if (midContent.includes('phone')) midPrompt = '📱 X wants your **phone number** before the password. Reply now:';
+        else if (midContent.includes('email')) midPrompt = '📧 X wants your **email address** before the password. Reply now:';
+        else if (midContent.includes('username')) midPrompt = '👤 X wants your **username** before the password. Reply now:';
+
+        await statusMsg.edit(midPrompt);
+
+        let midCollected;
+        try {
+          midCollected = await message.channel.
 
       // ── Step 4: Interactive challenge loop ──
       let attempts = 0;
