@@ -969,15 +969,23 @@ if (command === 'stoploop') {
         await page.goto('https://x.com/i/flow/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForTimeout(3000);
 
-        // ── Step 2: Username ──
+    // ── Step 2: Username ──
         await statusMsg.edit('⏳ Entering username...');
-        const usernameInput = 'input[autocomplete="username"]';
-        await page.waitForSelector(usernameInput, { timeout: 15000 })
-          .catch(() => { throw new Error('Username input not found'); });
-        await page.fill(usernameInput, username);
-        await page.keyboard.press('Enter');
-        await page.waitForTimeout(3000);
+        await page.waitForSelector('input[autocomplete="username"]', { timeout: 15000 })
+          .catch(() => { throw new Error('Username input not found — login page may not have loaded'); });
+        await page.click('input[autocomplete="username"]');
+        await page.waitForTimeout(500);
+        await page.type('input[autocomplete="username"]', username, { delay: 80 });
+        await page.waitForTimeout(1000);
 
+        // Click the Next button instead of pressing Enter
+        const nextBtn = await page.$('div[role="button"]:has-text("Next"), button:has-text("Next"), [data-testid="LoginForm_Login_Button"]');
+        if (nextBtn) {
+          await nextBtn.click();
+        } else {
+          await page.keyboard.press('Enter');
+        }
+        await page.waitForTimeout(4000);
         // ── Step 2.5: Handle extra middle step ──
         await page.waitForTimeout(2000);
         const midContent = await page.content();
