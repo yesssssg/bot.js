@@ -129,7 +129,29 @@ async function fetchLatestTweet(username) {
     // Wait for the timeline stream container to mount any tweet element
     await page.waitForSelector('article[data-testid="tweet"]', { state: 'visible', timeout: 20000 });
 
-    const latestTweet = page.locator('article[data-testid="tweet"]').first();
+    const tweetElements = page.locator('article[data-testid="tweet"]');
+    const tweetCount = await tweetElements.count();
+    
+    let latestTweet = null;
+
+    // Loop through timeline elements to ignore the pinned posts
+    for (let i = 0; i < tweetCount; i++) {
+      const currentElement = tweetElements.nth(i);
+      
+      // Look for the "Pinned" text or icon indicator inside the element scope
+      const isPinned = await currentElement.locator('[data-testid="socialContext"]').innerText()
+        .then(text => text.toLowerCase().includes('pinned'))
+        .catch(() => false);
+
+      if (!isPinned) {
+        latestTweet = currentElement;
+        break; // Found the absolute newest non-pinned timeline post
+      }
+    }
+
+    if (!latestTweet) {
+      throw new Error("Could not find any non-pinned post entries on the timeline view.");
+    }
 
     // Extract raw tweet link structure to extract Status ID
     const statusLinkElement = latestTweet.locator('a[href*="/status/"]').first();
@@ -172,12 +194,6 @@ function getLastPostedId() {
     return fs.readFileSync(TRACK_FILE, 'utf8').trim();
   }
   return null;
-}
-
-function saveLastPostedId(id) {
-  if (TRACK_FILE) {
-    fs.writeFileSync(TRACK_FILE, id, 'utf8');
-  }
 }
 
 // ─── Core post attempt ────────────────────────────────────────────────────────
@@ -405,7 +421,10 @@ async function runAltCloneTask() {
   const success = await attemptPost(targetToken, textToPost, mediaUrl, "MONITOR-CLONE");
   
   if (success) {
-    saveLastPostedId(currentTweetId);
+    // Corrected to invoke saveLastPostedId directly inline as a normal synchronous handler
+    if (TRACK_FILE) {
+      fs.writeFileSync(TRACK_FILE, currentTweetId, 'utf8');
+    }
     console.log(`[MONITOR] Post ${currentTweetId} tracked and copied successfully.`);
   }
 }
