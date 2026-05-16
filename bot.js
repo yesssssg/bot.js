@@ -643,6 +643,51 @@ function deleteAfter(msg, ms) {
   setTimeout(() => msg.delete().catch(() => {}), ms);
 }
 
+// ─── Multi-Account Helpers ────────────────────────────────────────────────────
+
+function getToken(num) {
+  const t = process.env[`TOKEN${num}`];
+  return t && t.trim() ? t.trim() : null;
+}
+
+function availableAccounts() {
+  const out = [];
+  if (getToken(1)) out.push(1);
+  if (getToken(2)) out.push(2);
+  return out;
+}
+
+async function pickAccount(message, statusMsg) {
+  const avail = availableAccounts();
+  if (avail.length === 0) {
+    await statusMsg.edit('❌ No tokens configured. Set TOKEN1 and/or TOKEN2 in Railway variables.');
+    return null;
+  }
+  if (avail.length === 1) {
+    await statusMsg.edit(`ℹ️ Only Account ${avail[0]} configured — using it automatically.`);
+    return avail[0];
+  }
+  await statusMsg.edit('🔑 **Which account?** Reply `1` or `2`. _(30 seconds to choose)_');
+  try {
+    const collected = await message.channel.awaitMessages({
+      filter: m => m.author.id === message.author.id && ['1', '2'].includes(m.content.trim()),
+      max: 1,
+      time: 30000,
+      errors: ['time'],
+    });
+    const choice = parseInt(collected.first().content.trim());
+    await collected.first().delete().catch(() => {});
+    if (!getToken(choice)) {
+      await statusMsg.edit(`❌ TOKEN${choice} is not set in Railway variables.`);
+      return null;
+    }
+    return choice;
+  } catch {
+    await statusMsg.edit('❌ No account selected — cancelled.');
+    return null;
+  }
+}
+
 // Variable to trace the detached process handler globally
 let altStakeoutProcess = null;
 
@@ -808,16 +853,22 @@ if (command === 'startloop') {
   const delay = parseInt(args[0]) || 60;
   if (delay < 10) return message.reply('❌ Minimum delay is 10 seconds.');
 
-  const status = await message.reply(`🚀 Attempting to start loop — every **${delay}** seconds...`);
+  const status = await message.reply(`⏳ Select an account...`);
+
+  const acctNum = await pickAccount(message, status);
+  if (!acctNum) return;
+
+  await status.edit(`🚀 Attempting to start loop with Account ${acctNum} — every **${delay}** seconds...`);
 
   try {
     console.log(`[LOOP] Attempting to import xloop.mjs...`);
+    process.env.X_AUTH_TOKEN = getToken(acctNum);
     const modulePath = './xposter/xloop.mjs';
     const { startLoop } = await import(modulePath);
     console.log(`[LOOP] Import successful, starting loop...`);
     
     await startLoop(delay);
-    await status.edit(`✅ **Loop started!** Posting every **${delay}** seconds. Use !stoploop to stop.`);
+    await status.edit(`✅ **Loop started with Account ${acctNum}!** Posting every **${delay}** seconds. Use !stoploop to stop.`);
   } catch (e) {
     console.error('[LOOP] CRITICAL ERROR:', e);
     await status.edit(`❌ Failed to start loop.\n\`\`\`\n${e.message}\n\`\`\``);
@@ -910,7 +961,11 @@ if (command === 'stoploop') {
     const targetAlt = process.env.TARGET_ALT ? process.env.TARGET_ALT.trim() : "jameshandalt67";
     const appendUrl = args[0] || "";
 
-    message.reply(`👁️ **Alt Surveillance Stakeout Initiated**\nTarget Profile: \`@${targetAlt}\`\nInterval: \`Every 1 hour\`\nAppended link: \`${appendUrl || "None"}\``)
+    const statusMsg = await message.reply('⏳ Select an account for the stakeout...');
+    const acctNum = await pickAccount(message, statusMsg);
+    if (!acctNum) return;
+
+    message.reply(`👁️ **Alt Surveillance Stakeout Initiated**\nAccount: \`${acctNum}\`\nTarget Profile: \`@${targetAlt}\`\nInterval: \`Every 1 hour\`\nAppended link: \`${appendUrl || "None"}\``)
       .then(() => {
         try {
           const runDir = path.join(__dirname, 'xposter');
@@ -919,6 +974,7 @@ if (command === 'stoploop') {
             cwd: runDir,
             env: {
               ...process.env,
+              X_AUTH_TOKEN: getToken(acctNum),
               TARGET_ALT: targetAlt,
               EXTRA_LINK: appendUrl
             }
