@@ -648,50 +648,52 @@ let altStakeoutProcess = null;
 
 // Place this inside your client.on('messageCreate', async (message) => { ... }) command blocks:
 if (command === 'startaltclone') {
-  if (!requireAdmin(message)) return message.reply('❌ Admin access only.');
-  if (altStakeoutProcess) return message.reply('⚠️ Alt tracking stakeout is already active.');
+    if (!requireAdmin(message)) return message.reply('❌ Admin access only.');
+    if (altStakeoutProcess) return message.reply('⚠️ Alt tracking stakeout is already active.');
 
-  // Enforce strict existence of variable check
-  const targetAlt = process.env.TARGET_ALT ? process.env.TARGET_ALT.trim() : "";
-  if (!targetAlt) {
-    return message.reply('❌ **Operational Error:** No `TARGET_ALT` environment variable found configured in Railway. Set it first before running this command.');
+    // Uses your explicit requested fallback account handle if environment properties aren't set
+    const targetAlt = process.env.TARGET_ALT ? process.env.TARGET_ALT.trim() : "jameshandalt67";
+    
+    // Captures any trailing link configuration argument directly from your command line message
+    const appendUrl = args[0] || "";
+
+    message.reply(`👁️ **Alt Surveillance Stakeout Initiated**\nTarget Profile: \`@${targetAlt}\`\nInterval: \`Every 1 hour\`\nAppended link: \`${appendUrl || "None"}\``)
+      .then(() => {
+        try {
+          const runDir = path.join(__dirname, 'xposter');
+          
+          // Detaches the script to keep it separated from regular loop environments
+          altStakeoutProcess = spawn('node', ['xloop.mjs'], {
+            cwd: runDir,
+            env: {
+              ...process.env,
+              TARGET_ALT: targetAlt,
+              EXTRA_LINK: appendUrl
+            }
+          });
+
+          altStakeoutProcess.stdout.on('data', (d) => console.log(`[STAKEOUT OUT]: ${d}`));
+          altStakeoutProcess.stderr.on('data', (d) => console.error(`[STAKEOUT ERR]: ${d}`));
+          altStakeoutProcess.on('close', (c) => {
+            console.log(`[SYSTEM] Stakeout loop tracking killed with code: ${c}`);
+            altStakeoutProcess = null;
+          });
+        } catch (err) {
+          altStakeoutProcess = null;
+          message.reply('❌ System error initializing background loop context: ' + err.message);
+        }
+      });
+    return;
   }
 
-  const appendUrl = args[0] || "";
-  await message.reply(`👁️ **Alt Surveillance Stakeout Initiated**\nTarget Profile: \`@${targetAlt}\`\nInterval: \`Every 1 hour\`\nAppended link: \`${appendUrl || "None"}\``);
+  if (command === 'stopaltclone') {
+    if (!requireAdmin(message)) return message.reply('❌ Admin access only.');
+    if (!altStakeoutProcess) return message.reply('⚠️ No active stakeout loop process instance running.');
 
-  try {
-    const runDir = path.join(__dirname, 'xposter');
-    altStakeoutProcess = spawn('node', ['xloop.mjs'], {
-      cwd: runDir,
-      env: {
-        ...process.env,
-        TARGET_ALT: targetAlt,
-        EXTRA_LINK: appendUrl
-      }
-    });
-
-    altStakeoutProcess.stdout.on('data', (d) => console.log(`[STAKEOUT OUT]: ${d}`));
-    altStakeoutProcess.stderr.on('data', (d) => console.error(`[STAKEOUT ERR]: ${d}`));
-    altStakeoutProcess.on('close', (c) => {
-      console.log(`[SYSTEM] Stakeout loop tracking killed with code: ${c}`);
-      altStakeoutProcess = null;
-    });
-  } catch (err) {
+    altStakeoutProcess.kill();
     altStakeoutProcess = null;
-    return message.reply('❌ System error initializing background loop context: ' + err.message);
+    return message.reply('🛑 Alt tracker staking engine loop safely terminated.');
   }
-  return;
-}
-
-if (command === 'stopaltclone') {
-  if (!requireAdmin(message)) return message.reply('❌ Admin access only.');
-  if (!altStakeoutProcess) return message.reply('⚠️ No active stakeout loop process instance running.');
-
-  altStakeoutProcess.kill();
-  altStakeoutProcess = null;
-  return message.reply('🛑 Alt tracker staking engine loop safely terminated.');
-}
 
 // ─── Join Ping Handler ────────────────────────────────────────────────────────
 
