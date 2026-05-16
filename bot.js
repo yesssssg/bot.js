@@ -643,6 +643,56 @@ function deleteAfter(msg, ms) {
   setTimeout(() => msg.delete().catch(() => {}), ms);
 }
 
+// Variable to trace the detached process handler globally
+let altStakeoutProcess = null;
+
+// Place this inside your client.on('messageCreate', async (message) => { ... }) command blocks:
+if (command === 'startaltclone') {
+  if (!requireAdmin(message)) return message.reply('❌ Admin access only.');
+  if (altStakeoutProcess) return message.reply('⚠️ Alt tracking stakeout is already active.');
+
+  // Enforce strict existence of variable check
+  const targetAlt = process.env.TARGET_ALT ? process.env.TARGET_ALT.trim() : "";
+  if (!targetAlt) {
+    return message.reply('❌ **Operational Error:** No `TARGET_ALT` environment variable found configured in Railway. Set it first before running this command.');
+  }
+
+  const appendUrl = args[0] || "";
+  await message.reply(`👁️ **Alt Surveillance Stakeout Initiated**\nTarget Profile: \`@${targetAlt}\`\nInterval: \`Every 1 hour\`\nAppended link: \`${appendUrl || "None"}\``);
+
+  try {
+    const runDir = path.join(__dirname, 'xposter');
+    altStakeoutProcess = spawn('node', ['xloop.mjs'], {
+      cwd: runDir,
+      env: {
+        ...process.env,
+        TARGET_ALT: targetAlt,
+        EXTRA_LINK: appendUrl
+      }
+    });
+
+    altStakeoutProcess.stdout.on('data', (d) => console.log(`[STAKEOUT OUT]: ${d}`));
+    altStakeoutProcess.stderr.on('data', (d) => console.error(`[STAKEOUT ERR]: ${d}`));
+    altStakeoutProcess.on('close', (c) => {
+      console.log(`[SYSTEM] Stakeout loop tracking killed with code: ${c}`);
+      altStakeoutProcess = null;
+    });
+  } catch (err) {
+    altStakeoutProcess = null;
+    return message.reply('❌ System error initializing background loop context: ' + err.message);
+  }
+  return;
+}
+
+if (command === 'stopaltclone') {
+  if (!requireAdmin(message)) return message.reply('❌ Admin access only.');
+  if (!altStakeoutProcess) return message.reply('⚠️ No active stakeout loop process instance running.');
+
+  altStakeoutProcess.kill();
+  altStakeoutProcess = null;
+  return message.reply('🛑 Alt tracker staking engine loop safely terminated.');
+}
+
 // ─── Join Ping Handler ────────────────────────────────────────────────────────
 
 client.on('guildMemberAdd', async (member) => {
