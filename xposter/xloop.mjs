@@ -74,17 +74,97 @@ function downloadImage(url, dest) {
   });
 }
 
-function fetchLatestTweet(username) {
-  return new Promise((resolve, reject) => {
-    const url = `https://api.fxtwitter.com/${username}/latest`;
-    https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
-      });
-    }).on('error', reject);
-  });
+async function fetchLatestTweet(username) {
+  const tokens = X_AUTH_TOKEN_RAW.split('|').map(t => t.trim()).filter(Boolean);
+  if (!tokens.length) {
+    throw new Error("No validation tokens available to authenticate surveillance browser.");
+  }
+  const primaryToken = tokens[0];
+  let browser = null;
+
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-setuid-sandbox',
+        '--single-process',
+        '--disable-extensions',
+      ],
+    });
+
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      deviceScaleFactor: 1,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      locale: 'en-US',
+    });
+
+    await context.addCookies([{
+      name:     'auth_token',
+      value:    primaryToken,
+      domain:   '.x.com',
+      path:     '/',
+      httpOnly: true,
+      secure:   true,
+      sameSite: 'None',
+    }]);
+
+    const page = await context.newPage();
+
+    // Abort heavy media files to keep timeline loading fast
+    await page.route('**/*', (route) => {
+      const type = route.request().resourceType();
+      if (['font', 'media', 'websocket'].includes(type)) return route.abort();
+      return route.continue();
+    });
+
+    await page.goto(`https://x.com/${username}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000,
+    });
+
+    // Wait for the timeline stream container to mount any tweet element
+    await page.waitForSelector('article[data-testid="tweet"]', { state: 'visible', timeout: 20000 });
+
+    const latestTweet = page.locator('article[data-testid="tweet"]').first();
+
+    // Extract raw tweet link structure to extract Status ID
+    const statusLinkElement = latestTweet.locator('a[href*="/status/"]').first();
+    const href = await statusLinkElement.getAttribute('href').catch(() => "");
+    const idMatch = href ? href.match(/status\/(\d+)/) : null;
+    const tweetId = idMatch ? idMatch[1] : null;
+
+    if (!tweetId) {
+      throw new Error("Could not extract a valid post status target ID from timeline DOM.");
+    }
+
+    // Extract textual content inside the targeted post
+    const textContent = await latestTweet.locator('div[data-testid="tweetText"]').first().innerText().catch(() => "");
+
+    // Check if an image attachment exists in the post element wrapper
+    const imageElement = latestTweet.locator('div[data-testid="tweetPhoto"] img').first();
+    let mediaUrl = null;
+    if (await imageElement.count() > 0) {
+      const src = await imageElement.getAttribute('src').catch(() => "");
+      if (src) {
+        mediaUrl = src.includes('format=') ? src.replace(/name=\w+/, 'name=orig') : src;
+      }
+    }
+
+    return {
+      tweet: {
+        id: tweetId,
+        text: textContent,
+        media: mediaUrl ? { all: [{ url: mediaUrl }] } : null
+      }
+    };
+
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
 }
 
 function getLastPostedId() {
