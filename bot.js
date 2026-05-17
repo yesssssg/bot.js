@@ -660,14 +660,14 @@ function availableAccounts() {
 async function pickAccount(message, statusMsg) {
   const avail = availableAccounts();
   if (avail.length === 0) {
-    await statusMsg.edit('❌ No tokens configured. Set TOKEN1 and/or TOKEN2 in Railway variables.');
+    await statusMsg.edit('no tokens configured. set TOKEN1 and/or TOKEN2 in railway variables.');
     return null;
   }
   if (avail.length === 1) {
-    await statusMsg.edit(`ℹ️ Only Account ${avail[0]} configured — using it automatically.`);
+    await statusMsg.edit(`only account ${avail[0]} configured — using it automatically.`);
     return avail[0];
   }
-  await statusMsg.edit('🔑 **Which account?** Reply `1` or `2`. _(30 seconds to choose)_');
+  await statusMsg.edit('which account? reply `1` or `2`. (30 seconds)');
   try {
     const collected = await message.channel.awaitMessages({
       filter: m => m.author.id === message.author.id && ['1', '2'].includes(m.content.trim()),
@@ -678,12 +678,12 @@ async function pickAccount(message, statusMsg) {
     const choice = parseInt(collected.first().content.trim());
     await collected.first().delete().catch(() => {});
     if (!getToken(choice)) {
-      await statusMsg.edit(`❌ TOKEN${choice} is not set in Railway variables.`);
+      await statusMsg.edit(`TOKEN${choice} is not set in railway variables.`);
       return null;
     }
     return choice;
   } catch {
-    await statusMsg.edit('❌ No account selected — cancelled.');
+    await statusMsg.edit('no account selected — cancelled.');
     return null;
   }
 }
@@ -724,9 +724,9 @@ client.on('channelCreate', async (channel) => {
     const embed = new EmbedBuilder()
       .setColor(0xFF69B4)
       .setDescription(
-        `✦ new channel added\n` +
+        `new channel added\n` +
         `${channelRef}\n` +
-        `∙ ${channel.guild.name}`
+        `${channel.guild.name}`
       );
 
     await updatesChannel.send({ embeds: [embed] });
@@ -780,24 +780,23 @@ client.on('messageCreate', async (message) => {
   const command = args.shift().toLowerCase();
 
   // ── !xpost ────────────────────────────────────────────────────────────────
-   // ── !xpost ────────────────────────────────────────────────────────────────
   if (command === 'xpost') {
-    if (!requireAdmin(message)) return message.reply('❌ Admin only.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
 
     const postCount = parseInt(args[0]);
     const delayStr = args[1] || '5s';
 
     if (!postCount || postCount < 1) {
-      return message.reply('Usage: `!xpost <number> <delay>`\nExample: `!xpost 1 10s`');
+      return message.reply('usage: `!xpost <number> <delay>`\nexample: `!xpost 1 10s`');
     }
 
     const delayMs = parseCooldown(delayStr);
-    if (!delayMs) return message.reply('❌ Invalid delay. Examples: 5s, 10s, 30s');
+    if (!delayMs) return message.reply('invalid delay. examples: 5s, 10s, 30s');
 
-    const statusMsg = await message.reply(`⏳ Starting ${postCount} post(s)...`);
+    const statusMsg = await message.reply(`starting ${postCount} post(s)...`);
 
     try {
-      const XPOSTER_PATH = path.join(__dirname, 'xposter');   // ← Simplified
+      const XPOSTER_PATH = path.join(__dirname, 'xposter');
 
       console.log(`[xpost] Attempting to run from: ${XPOSTER_PATH}`);
 
@@ -826,72 +825,73 @@ client.on('messageCreate', async (message) => {
 
       child.on('error', async (err) => {
         console.error('[xpost] Spawn error:', err);
-        await statusMsg.edit(`❌ Failed to start poster: ${err.message}`);
+        await statusMsg.edit(`failed to start poster: ${err.message}`);
       });
 
       child.on('close', async (code) => {
         const lastLines = output.trim().split('\n').slice(-10).join('\n');
         if (code === 0) {
-          await statusMsg.edit(`✅ Finished!\n\`\`\`\n${lastLines}\`\`\``);
+          await statusMsg.edit(`done\n\`\`\`\n${lastLines}\`\`\``);
         } else {
-          await statusMsg.edit(`❌ Poster crashed (code ${code})\n\`\`\`\n${lastLines}\`\`\``);
+          await statusMsg.edit(`poster crashed (code ${code})\n\`\`\`\n${lastLines}\`\`\``);
         }
       });
 
     } catch (e) {
       console.error('[xpost] Error:', e);
-      await statusMsg.edit('❌ Error starting poster: ' + e.message);
+      await statusMsg.edit('error starting poster: ' + e.message);
     }
 
     return;
   }
- // ── X LOOP POSTER ─────────────────────────────────────────────
-// ── X LOOP POSTER ─────────────────────────────────────────────
-if (command === 'startloop') {
-  if (!requireAdmin(message)) return message.reply('❌ Admin only.');
 
-  const delay = parseInt(args[0]) || 60;
-  if (delay < 10) return message.reply('❌ Minimum delay is 10 seconds.');
+  // ── X LOOP POSTER ─────────────────────────────────────────────
+  if (command === 'startloop') {
+    if (!requireAdmin(message)) return message.reply('admin only.');
 
-  const status = await message.reply(`⏳ Select an account...`);
+    const delay = parseInt(args[0]) || 60;
+    if (delay < 10) return message.reply('minimum delay is 10 seconds.');
 
-  const acctNum = await pickAccount(message, status);
-  if (!acctNum) return;
+    const status = await message.reply(`select an account...`);
 
-  await status.edit(`🚀 Attempting to start loop with Account ${acctNum} — every **${delay}** seconds...`);
+    const acctNum = await pickAccount(message, status);
+    if (!acctNum) return;
 
-  try {
-    console.log(`[LOOP] Attempting to import xloop.mjs...`);
-    process.env.X_AUTH_TOKEN = getToken(acctNum);
-    const modulePath = './xposter/xloop.mjs';
-    const { startLoop } = await import(modulePath);
-    console.log(`[LOOP] Import successful, starting loop...`);
-    
-    await startLoop(delay);
-    await status.edit(`✅ **Loop started with Account ${acctNum}!** Posting every **${delay}** seconds. Use !stoploop to stop.`);
-  } catch (e) {
-    console.error('[LOOP] CRITICAL ERROR:', e);
-    await status.edit(`❌ Failed to start loop.\n\`\`\`\n${e.message}\n\`\`\``);
+    await status.edit(`starting loop with account ${acctNum} — every **${delay}** seconds...`);
+
+    try {
+      console.log(`[LOOP] Attempting to import xloop.mjs...`);
+      process.env.X_AUTH_TOKEN = getToken(acctNum);
+      const modulePath = './xposter/xloop.mjs';
+      const { startLoop } = await import(modulePath);
+      console.log(`[LOOP] Import successful, starting loop...`);
+
+      await startLoop(delay);
+      await status.edit(`loop started with account ${acctNum}. posting every **${delay}** seconds. use !stoploop to stop.`);
+    } catch (e) {
+      console.error('[LOOP] CRITICAL ERROR:', e);
+      await status.edit(`failed to start loop.\n\`\`\`\n${e.message}\n\`\`\``);
+    }
+    return;
   }
-  return;
-}
 
-if (command === 'stoploop') {
-  if (!requireAdmin(message)) return message.reply('❌ Admin only.');
-  
-  try {
-    const { stopLoop } = await import('./xposter/xloop.mjs');
-    stopLoop();
-    await message.reply('⛔ Loop stopped.');
-  } catch (e) {
-    console.error('[LOOP] Stop error:', e);
-    await message.reply('❌ Failed to stop loop.');
+  if (command === 'stoploop') {
+    if (!requireAdmin(message)) return message.reply('admin only.');
+
+    try {
+      const { stopLoop } = await import('./xposter/xloop.mjs');
+      stopLoop();
+      await message.reply('loop stopped.');
+    } catch (e) {
+      console.error('[LOOP] Stop error:', e);
+      await message.reply('failed to stop loop.');
+    }
+    return;
   }
-  return;
-}
+
   // ── !disable ──────────────────────────────────────────────────────────────
   if (command === 'disable') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
     let stopped = 0;
     for (const [channelId, data] of everyonePingIntervals) {
       clearInterval(data.interval);
@@ -903,35 +903,35 @@ if (command === 'stoploop') {
       userPingIntervals.delete(channelId);
       stopped++;
     }
-    if (stopped === 0) return message.reply('ℹ️ No active auto-pings to stop.');
-    return message.reply(`✅ Stopped **${stopped}** active auto-ping${stopped !== 1 ? 's' : ''}.`);
+    if (stopped === 0) return message.reply('no active auto-pings to stop.');
+    return message.reply(`stopped **${stopped}** auto-ping${stopped !== 1 ? 's' : ''}.`);
   }
 
   // ── !pingjoin ─────────────────────────────────────────────────────────────
   if (command === 'pingjoin') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
     const sub = args[0]?.toLowerCase();
     if (sub === 'enable') {
       pingJoinChannels.set(message.guild.id, message.channel.id);
-      return message.reply(`✅ Join pings **enabled** in this channel.`);
+      return message.reply(`join pings enabled in this channel.`);
     }
     if (sub === 'disable') {
-      if (!pingJoinChannels.has(message.guild.id)) return message.reply('ℹ️ Join pings are not active.');
+      if (!pingJoinChannels.has(message.guild.id)) return message.reply('join pings are not active.');
       pingJoinChannels.delete(message.guild.id);
-      return message.reply('✅ Join pings **disabled**.');
+      return message.reply('join pings disabled.');
     }
-    return message.reply('Usage: `!pingjoin enable` or `!pingjoin disable`');
+    return message.reply('usage: `!pingjoin enable` or `!pingjoin disable`');
   }
 
   // ── !autopingeveryone ─────────────────────────────────────────────────────
   if (command === 'autopingeveryone') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
     const sub = args[0]?.toLowerCase();
     if (sub === 'enable') {
       const cooldownStr = args[1];
-      if (!cooldownStr) return message.reply('Usage: `!autopingeveryone enable <cooldown>`');
+      if (!cooldownStr) return message.reply('usage: `!autopingeveryone enable <cooldown>`');
       const cooldownMs = parseCooldown(cooldownStr);
-      if (!cooldownMs) return message.reply('❌ Invalid cooldown.');
+      if (!cooldownMs) return message.reply('invalid cooldown.');
       if (everyonePingIntervals.has(message.channel.id)) clearInterval(everyonePingIntervals.get(message.channel.id).interval);
       const interval = setInterval(async () => {
         try {
@@ -942,34 +942,34 @@ if (command === 'stoploop') {
         }
       }, cooldownMs);
       everyonePingIntervals.set(message.channel.id, { interval, cooldownMs });
-      return message.reply(`✅ Auto @everyone ping enabled every **${formatCooldown(cooldownMs)}**.`);
+      return message.reply(`auto @everyone ping enabled every **${formatCooldown(cooldownMs)}**.`);
     }
     if (sub === 'disable') {
-      if (!everyonePingIntervals.has(message.channel.id)) return message.reply('ℹ️ Not active in this channel.');
+      if (!everyonePingIntervals.has(message.channel.id)) return message.reply('not active in this channel.');
       clearInterval(everyonePingIntervals.get(message.channel.id).interval);
       everyonePingIntervals.delete(message.channel.id);
-      return message.reply('✅ Auto @everyone ping disabled.');
+      return message.reply('auto @everyone ping disabled.');
     }
-    return message.reply('Usage: `!autopingeveryone enable <cooldown>` or `!autopingeveryone disable`');
+    return message.reply('usage: `!autopingeveryone enable <cooldown>` or `!autopingeveryone disable`');
   }
 
   // ── ALT TRACKER SURVEILLANCE STAKEOUT LOOP ───────────────────────
   if (command === 'startaltclone') {
-    if (!requireAdmin(message)) return message.reply('❌ Admin access only.');
-    if (altStakeoutProcess) return message.reply('⚠️ Alt tracking stakeout is already active.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (altStakeoutProcess) return message.reply('alt tracking is already active.');
 
     const targetAlt = process.env.TARGET_ALT ? process.env.TARGET_ALT.trim() : "jameshandalt67";
     const appendUrl = args[0] || "";
 
-    const statusMsg = await message.reply('⏳ Select an account for the stakeout...');
+    const statusMsg = await message.reply('select an account for the stakeout...');
     const acctNum = await pickAccount(message, statusMsg);
     if (!acctNum) return;
 
-    message.reply(`👁️ **Alt Surveillance Stakeout Initiated**\nAccount: \`${acctNum}\`\nTarget Profile: \`@${targetAlt}\`\nInterval: \`Every 1 hour\`\nAppended link: \`${appendUrl || "None"}\``)
+    message.reply(`alt stakeout started\naccount: \`${acctNum}\`\ntarget: \`@${targetAlt}\`\ninterval: every 1 hour\nappended link: \`${appendUrl || "none"}\``)
       .then(() => {
         try {
           const runDir = path.join(__dirname, 'xposter');
-          
+
           altStakeoutProcess = spawn('node', ['xloop.mjs'], {
             cwd: runDir,
             env: {
@@ -988,38 +988,38 @@ if (command === 'stoploop') {
           });
         } catch (err) {
           altStakeoutProcess = null;
-          message.reply('❌ System error initializing background loop context: ' + err.message);
+          message.reply('System error initializing background loop context: ' + err.message);
         }
       });
     return;
   }
 
   if (command === 'stopaltclone') {
-    if (!requireAdmin(message)) return message.reply('❌ Admin access only.');
-    if (!altStakeoutProcess) return message.reply('⚠️ No active stakeout loop process instance running.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!altStakeoutProcess) return message.reply('no active stakeout running.');
 
     altStakeoutProcess.kill();
     altStakeoutProcess = null;
-    return message.reply('🛑 Alt tracker staking engine loop safely terminated.');
+    return message.reply('stakeout stopped.');
   }
-  
+
   // ── !autopinguser ─────────────────────────────────────────────────────────
   if (command === 'autopinguser') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
     const sub = args[0]?.toLowerCase();
     if (sub === 'enable') {
       const userMention = args[1];
       const cooldownStr = args[2];
-      if (!userMention || !cooldownStr) return message.reply('Usage: `!autopinguser enable @user <cooldown>`');
+      if (!userMention || !cooldownStr) return message.reply('usage: `!autopinguser enable @user <cooldown>`');
       const userId = userMention.replace(/[<@!>]/g, '');
       let targetUser;
       try {
         targetUser = await message.guild.members.fetch(userId);
       } catch {
-        return message.reply('❌ Could not find that user.');
+        return message.reply('Could not find that user.');
       }
       const cooldownMs = parseCooldown(cooldownStr);
-      if (!cooldownMs) return message.reply('❌ Invalid cooldown.');
+      if (!cooldownMs) return message.reply('invalid cooldown.');
       if (userPingIntervals.has(message.channel.id)) clearInterval(userPingIntervals.get(message.channel.id).interval);
       const interval = setInterval(async () => {
         try {
@@ -1030,32 +1030,33 @@ if (command === 'stoploop') {
         }
       }, cooldownMs);
       userPingIntervals.set(message.channel.id, { interval, userId, cooldownMs });
-      return message.reply(`✅ Auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}**.`);
+      return message.reply(`auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}**.`);
     }
     if (sub === 'disable') {
-      if (!userPingIntervals.has(message.channel.id)) return message.reply('ℹ️ Not active in this channel.');
+      if (!userPingIntervals.has(message.channel.id)) return message.reply('not active in this channel.');
       clearInterval(userPingIntervals.get(message.channel.id).interval);
       userPingIntervals.delete(message.channel.id);
-      return message.reply('✅ Auto user ping disabled.');
+      return message.reply('auto user ping disabled.');
     }
-    return message.reply('Usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
+    return message.reply('usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
   }
-// ── !auth ─────────────────────────────────────────────────────────────────
+
+  // ── !auth ─────────────────────────────────────────────────────────────────
   if (command === 'auth') {
-    if (!requireAdmin(message)) return message.reply('❌ Admin only.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
 
     const username = args[0];
     const password = args.slice(1).join(' ');
 
     if (!username || !password) {
-      return message.reply('Usage: `!auth <username> <password>`');
+      return message.reply('usage: `!auth <username> <password>`');
     }
 
-    const statusMsg = await message.reply('⏳ Launching browser...');
+    const statusMsg = await message.reply('launching browser...');
 
     let browser = null;
     let page = null;
-    let activeInput = null; // tracks the currently focused input
+    let activeInput = null;
 
     const sendScreenshot = async (label) => {
       try {
@@ -1065,26 +1066,26 @@ if (command === 'stoploop') {
         const attachment = new AttachmentBuilder(buf, { name: 'screen.png' });
         await message.channel.send({
           content:
-            `📸 **${label}**\n` +
-            `Commands:\n` +
-            `• \`click x y\` — click anywhere\n` +
-            `• \`type: your text here\` — type into the active input\n` +
-            `• \`enter\` — press Enter\n` +
-            `• \`tab\` — press Tab\n` +
-            `• \`username\` — auto-fill username\n` +
-            `• \`password\` — auto-fill password\n` +
-            `• \`s\` — take a new screenshot\n` +
-            `• \`done\` — extract the token\n` +
-            `• \`cancel\` — abort`,
+            `**${label}**\n` +
+            `commands:\n` +
+            `\`click x y\` — click anywhere\n` +
+            `\`type: your text here\` — type into the active input\n` +
+            `\`enter\` — press enter\n` +
+            `\`tab\` — press tab\n` +
+            `\`username\` — auto-fill username\n` +
+            `\`password\` — auto-fill password\n` +
+            `\`s\` — take a screenshot\n` +
+            `\`done\` — extract the token\n` +
+            `\`cancel\` — abort`,
           files: [attachment]
         });
       } catch (e) {
-        await message.channel.send(`📸 Screenshot failed: ${e.message}`).catch(() => {});
+        await message.channel.send(`screenshot failed: ${e.message}`).catch(() => {});
       }
     };
 
     const waitForCommand = async () => {
-      await statusMsg.edit('⌨️ Waiting for your command...');
+      await statusMsg.edit('waiting for your command...');
       try {
         const collected = await message.channel.awaitMessages({
           filter: m => m.author.id === message.author.id,
@@ -1115,8 +1116,7 @@ if (command === 'stoploop') {
 
       page = await context.newPage();
 
-      // ── Load login page ──
-      await statusMsg.edit('⏳ Loading X login page...');
+      await statusMsg.edit('loading x login page...');
       try {
         await page.goto('https://x.com/i/flow/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
         await page.waitForTimeout(3000);
@@ -1124,34 +1124,31 @@ if (command === 'stoploop') {
         throw new Error(`Page load failed: ${e.message}`);
       }
 
-      await sendScreenshot('X login loaded — you are in control');
+      await sendScreenshot('x login loaded — you are in control');
 
-      // ── Main control loop ──
       while (true) {
         const response = await waitForCommand();
 
         if (!response || response.toLowerCase() === 'cancel') {
           await browser.close();
-          return statusMsg.edit('❌ Cancelled.');
+          return statusMsg.edit('cancelled.');
         }
 
         const lower = response.toLowerCase();
 
-        // ── click x y ──
         if (lower.startsWith('click ')) {
           const parts = response.split(' ');
           const x = parseInt(parts[1]);
           const y = parseInt(parts[2]);
 
           if (isNaN(x) || isNaN(y)) {
-            await statusMsg.edit('❌ Invalid. Use: `click 450 300`');
+            await statusMsg.edit('invalid. use: `click 450 300`');
             continue;
           }
 
           await page.mouse.click(x, y);
           await page.waitForTimeout(800);
 
-          // Check if we clicked an input/textarea
           const clickedInput = await page.evaluate(({ cx, cy }) => {
             const el = document.elementFromPoint(cx, cy);
             if (!el) return null;
@@ -1171,62 +1168,57 @@ if (command === 'stoploop') {
           if (clickedInput) {
             activeInput = { x, y, ...clickedInput };
             await statusMsg.edit(
-              `✅ Clicked a **text input** at ${x}, ${y}\n` +
-              `Field info: \`${JSON.stringify(clickedInput)}\`\n` +
-              `Now use \`type: your text\` to type into it, or \`username\`/\`password\` to auto-fill.`
+              `clicked a text input at ${x}, ${y}\n` +
+              `field: \`${JSON.stringify(clickedInput)}\`\n` +
+              `use \`type: your text\` to type, or \`username\`/\`password\` to auto-fill.`
             );
           } else {
             activeInput = null;
-            await statusMsg.edit(`✅ Clicked at ${x}, ${y} (not a text field)`);
+            await statusMsg.edit(`clicked at ${x}, ${y}`);
           }
 
           await page.waitForTimeout(1000);
-          await sendScreenshot(`After click at ${x}, ${y}`);
+          await sendScreenshot(`after click at ${x}, ${y}`);
           continue;
         }
 
-        // ── type: text ──
         if (lower.startsWith('type:')) {
           const text = response.slice(5).trim();
           if (!text) {
-            await statusMsg.edit('❌ Nothing to type. Use: `type: hello world`');
+            await statusMsg.edit('nothing to type. use: `type: hello world`');
             continue;
           }
           if (!activeInput) {
-            await statusMsg.edit('⚠️ No input selected — clicking the last known position or just typing at cursor...');
+            await statusMsg.edit('no input selected — typing at cursor...');
           }
           await page.keyboard.type(text, { delay: 80 });
-          await statusMsg.edit(`✅ Typed: "${text}"`);
+          await statusMsg.edit(`typed: "${text}"`);
           await page.waitForTimeout(500);
-          await sendScreenshot('After typing');
+          await sendScreenshot('after typing');
           continue;
         }
 
-        // ── enter ──
         if (lower === 'enter') {
           await page.keyboard.press('Enter');
-          await statusMsg.edit('✅ Pressed Enter');
+          await statusMsg.edit('pressed enter');
           await page.waitForTimeout(2000);
-          await sendScreenshot('After Enter');
+          await sendScreenshot('after enter');
           continue;
         }
 
-        // ── tab ──
         if (lower === 'tab') {
           await page.keyboard.press('Tab');
-          await statusMsg.edit('✅ Pressed Tab');
+          await statusMsg.edit('pressed tab');
           await page.waitForTimeout(500);
-          await sendScreenshot('After Tab');
+          await sendScreenshot('after tab');
           continue;
         }
 
-        // ── screenshot ──
         if (lower === 's' || lower === 'screenshot') {
-          await sendScreenshot('Current screen');
+          await sendScreenshot('current screen');
           continue;
         }
 
-        // ── auto-fill username ──
         if (lower === 'username') {
           const selectors = [
             'input[autocomplete="username"]',
@@ -1251,13 +1243,12 @@ if (command === 'stoploop') {
               }
             } catch {}
           }
-          await statusMsg.edit(filled ? `✅ Auto-filled username` : '❌ Could not find a username field');
+          await statusMsg.edit(filled ? `username filled` : 'Could not find a username field');
           await page.waitForTimeout(500);
-          await sendScreenshot('After username fill');
+          await sendScreenshot('after username fill');
           continue;
         }
 
-        // ── auto-fill password ──
         if (lower === 'password') {
           try {
             const el = await page.$('input[name="password"], input[type="password"]');
@@ -1267,31 +1258,29 @@ if (command === 'stoploop') {
               await el.fill('');
               await el.type(password, { delay: 80 });
               activeInput = { sel: 'password' };
-              await statusMsg.edit('✅ Auto-filled password');
+              await statusMsg.edit('password filled');
             } else {
-              await statusMsg.edit('❌ Could not find a password field');
+              await statusMsg.edit('Could not find a password field');
             }
           } catch (e) {
-            await statusMsg.edit(`❌ Error: ${e.message}`);
+            await statusMsg.edit(`Error: ${e.message}`);
           }
           await page.waitForTimeout(500);
-          await sendScreenshot('After password fill');
+          await sendScreenshot('after password fill');
           continue;
         }
 
-        // ── clear current input ──
         if (lower === 'clear') {
           await page.keyboard.press('Control+A');
           await page.keyboard.press('Backspace');
-          await statusMsg.edit('✅ Cleared input');
-          await sendScreenshot('After clear');
+          await statusMsg.edit('cleared input');
+          await sendScreenshot('after clear');
           continue;
         }
 
-        // ── done — extract token ──
         if (lower === 'done') {
           const url = page.url();
-          await statusMsg.edit(`⏳ Current URL: \`${url}\` — extracting auth_token...`);
+          await statusMsg.edit(`current url: \`${url}\` — extracting auth_token...`);
 
           const cookies = await context.cookies();
           const authCookie = cookies.find(c => c.name === 'auth_token');
@@ -1299,7 +1288,7 @@ if (command === 'stoploop') {
 
           if (!authCookie) {
             return statusMsg.edit(
-              `❌ \`auth_token\` not found in cookies.\n` +
+              `\`auth_token\` not found in cookies.\n` +
               `URL was: \`${url}\`\n` +
               `You may not be fully logged in yet.`
             );
@@ -1307,15 +1296,14 @@ if (command === 'stoploop') {
 
           try {
             const dm = await message.author.createDM();
-            await dm.send(`✅ **auth_token for \`${username}\`:**\n\`\`\`\n${authCookie.value}\n\`\`\``);
-            return statusMsg.edit('✅ Done! auth_token sent to your DMs.');
+            await dm.send(`auth_token for \`${username}\`:\n\`\`\`\n${authCookie.value}\n\`\`\``);
+            return statusMsg.edit('done. auth_token sent to your dms.');
           } catch {
-            return statusMsg.edit(`✅ Got it (DMs closed — delete this fast):\n\`\`\`\n${authCookie.value}\n\`\`\``);
+            return statusMsg.edit(`got it (dms closed — delete this fast):\n\`\`\`\n${authCookie.value}\n\`\`\``);
           }
         }
 
-        // ── unknown command ──
-        await statusMsg.edit(`❓ Unknown command: \`${response}\`. Use \`s\` for a screenshot to see available commands.`);
+        await statusMsg.edit(`unknown command: \`${response}\`. use \`s\` for a screenshot.`);
       }
 
     } catch (e) {
@@ -1324,16 +1312,17 @@ if (command === 'stoploop') {
           const { AttachmentBuilder } = await import('discord.js');
           const buf = await page.screenshot({ fullPage: false });
           const attachment = new AttachmentBuilder(buf, { name: 'error.png' });
-          await message.channel.send({ content: `📸 **Error: ${e.message}**`, files: [attachment] });
+          await message.channel.send({ content: `error: ${e.message}`, files: [attachment] });
         }
       } catch {}
       if (browser) await browser.close().catch(() => {});
       console.error('[!auth] Error:', e);
-      await statusMsg.edit(`❌ **Error:** \`${e.message}\``);
+      await statusMsg.edit(`**Error:** \`${e.message}\``);
     }
 
     return;
   }
+
   // ── !randommessages [count] [channel] ────────────────────────────────────
   if (command === 'randommessages') {
     try {
@@ -1350,19 +1339,19 @@ if (command === 'stoploop') {
         }
       }
 
-      if (isNaN(requestedCount) || requestedCount < 1) return message.reply('Usage: `!randommessages [number] [channel name]`');
+      if (isNaN(requestedCount) || requestedCount < 1) return message.reply('usage: `!randommessages [number] [channel name]`');
 
       let targetChannel = message.channel;
       if (channelQuery) {
         const found = findClosestChannel(message.guild, channelQuery);
-        if (!found) return message.reply(`Couldn't find a channel matching "${channelQuery}".`);
+        if (!found) return message.reply(`couldn't find a channel matching "${channelQuery}".`);
         targetChannel = found;
       }
 
       let fetched = await targetChannel.messages.fetch({ limit: 100 });
       let pool = fetched.filter(m => !m.author.bot && m.content.trim().length > 0).map(m => m);
 
-      if (pool.length === 0) return message.reply(`No messages found in ${targetChannel.id !== message.channel.id ? `#${targetChannel.name}` : 'this channel'}.`);
+      if (pool.length === 0) return message.reply(`no messages found in ${targetChannel.id !== message.channel.id ? `#${targetChannel.name}` : 'this channel'}.`);
 
       const actualCount = Math.min(requestedCount, pool.length);
       const picked = await weightedRandomPick(pool, actualCount, message.guild);
@@ -1374,18 +1363,18 @@ if (command === 'stoploop') {
       return message.reply(header + lines);
     } catch (e) {
       console.error(e);
-      return message.reply('Failed to fetch messages.');
+      return message.reply('failed to fetch messages.');
     }
   }
 
   // ── !purge ────────────────────────────────────────────────────────────────
   if (command === 'purge') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
-    if (!message.channel.permissionsFor(message.guild.members.me).has(PermissionsBitField.Flags.ManageMessages)) return message.reply('❌ I need Manage Messages permission.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!message.channel.permissionsFor(message.guild.members.me).has(PermissionsBitField.Flags.ManageMessages)) return message.reply('I need Manage Messages permission.');
 
     const excludeIndex = args.indexOf('--exclude');
     const count = parseInt(args[0]);
-    if (isNaN(count) || count < 1 || count > 100) return message.reply('Usage: `!purge <1-100> [--exclude @user1 @user2 ...]`');
+    if (isNaN(count) || count < 1 || count > 100) return message.reply('usage: `!purge <1-100> [--exclude @user1 @user2 ...]`');
 
     const excludedIds = new Set();
     if (excludeIndex !== -1) {
@@ -1400,24 +1389,24 @@ if (command === 'stoploop') {
       let fetched = await message.channel.messages.fetch({ limit: 100 });
       const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
       let toDelete = fetched.filter(m => !excludedIds.has(m.author.id) && m.createdTimestamp > twoWeeksAgo).map(m => m).slice(0, count);
-      if (toDelete.length === 0) return message.channel.send('ℹ️ No messages to delete.');
+      if (toDelete.length === 0) return message.channel.send('no messages to delete.');
       await message.channel.bulkDelete(toDelete, true);
       const excludeNote = excludedIds.size > 0 ? ` (excluded ${excludedIds.size} user${excludedIds.size > 1 ? 's' : ''})` : '';
-      const reply = await message.channel.send(`🗑️ Deleted **${toDelete.length}** message${toDelete.length !== 1 ? 's' : ''}${excludeNote}.`);
+      const reply = await message.channel.send(`deleted **${toDelete.length}** message${toDelete.length !== 1 ? 's' : ''}${excludeNote}.`);
       setTimeout(() => reply.delete().catch(() => {}), 4000);
     } catch (e) {
       console.error(e);
-      message.channel.send('❌ Failed to delete messages. Make sure messages are not older than 14 days.').catch(() => {});
+      message.channel.send('Failed to delete messages. Make sure messages are not older than 14 days.').catch(() => {});
     }
   }
 
   // ── !kick ─────────────────────────────────────────────────────────────────
   if (command === 'kick') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
-    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.KickMembers)) return message.reply('❌ I need Kick Members permission.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.KickMembers)) return message.reply('I need Kick Members permission.');
 
     const userMention = args[0];
-    if (!userMention) return message.reply('Usage: `!kick @user [reason]`');
+    if (!userMention) return message.reply('usage: `!kick @user [reason]`');
 
     const userId = userMention.replace(/[<@!>]/g, '');
     const reason = args.slice(1).join(' ') || 'No reason provided';
@@ -1426,27 +1415,27 @@ if (command === 'stoploop') {
     try {
       member = await message.guild.members.fetch(userId);
     } catch {
-      return message.reply('❌ Could not find that user.');
+      return message.reply('Could not find that user.');
     }
 
-    if (!member.kickable) return message.reply('❌ I cannot kick this user. They may have a higher role than me.');
+    if (!member.kickable) return message.reply('I cannot kick this user. They may have a higher role than me.');
 
     try {
       await member.kick(reason);
-      return message.reply(`✅ **${member.user.tag}** has been kicked. Reason: ${reason}`);
+      return message.reply(`**${member.user.tag}** kicked. reason: ${reason}`);
     } catch (e) {
       console.error('Failed to kick member:', e);
-      return message.reply('❌ Failed to kick that user.');
+      return message.reply('Failed to kick that user.');
     }
   }
 
   // ── !ban ──────────────────────────────────────────────────────────────────
   if (command === 'ban') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
-    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('❌ I need Ban Members permission.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('I need Ban Members permission.');
 
     const userMention = args[0];
-    if (!userMention) return message.reply('Usage: `!ban @user [reason]`');
+    if (!userMention) return message.reply('usage: `!ban @user [reason]`');
 
     const userId = userMention.replace(/[<@!>]/g, '');
     const reason = args.slice(1).join(' ') || 'No reason provided';
@@ -1455,23 +1444,23 @@ if (command === 'stoploop') {
     try {
       member = await message.guild.members.fetch(userId);
     } catch {
-      return message.reply('❌ Could not find that user.');
+      return message.reply('Could not find that user.');
     }
 
-    if (!member.bannable) return message.reply('❌ I cannot ban this user. They may have a higher role than me.');
+    if (!member.bannable) return message.reply('I cannot ban this user. They may have a higher role than me.');
 
     try {
       await member.ban({ reason, deleteMessageSeconds: 0 });
-      return message.reply(`✅ **${member.user.tag}** has been banned. Reason: ${reason}`);
+      return message.reply(`**${member.user.tag}** banned. reason: ${reason}`);
     } catch (e) {
       console.error('Failed to ban member:', e);
-      return message.reply('❌ Failed to ban that user.');
+      return message.reply('Failed to ban that user.');
     }
   }
 
   // ── !fm ───────────────────────────────────────────────────────────────────
   if (command === 'fm') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
 
     const embed = new EmbedBuilder()
       .setColor(0xFFB6C1)
@@ -1515,35 +1504,35 @@ if (command === 'stoploop') {
 
   // ── !post ─────────────────────────────────────────────────────────────────
   if (command === 'post') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
     const text = args.join(' ');
-    if (!text) return message.reply('Usage: `!post <text>` — sets the target text for both X and Reddit verification.');
+    if (!text) return message.reply('usage: `!post <text>`');
     X_WATCH.TARGET_TEXT = text;
     REDDIT_WATCH.TARGET_TEXT = text;
-    return message.reply(`✅ Target text updated to: **${text}**`);
+    return message.reply(`target text updated to: **${text}**`);
   }
 
   // ── !rr ───────────────────────────────────────────────────────────────────
   if (command === 'rr') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
 
     const msgId = args[0];
     const emojiRaw = args[1];
     const roleName = args.slice(2).join(' ');
 
     if (!msgId || !emojiRaw || !roleName) {
-      return message.reply('Usage: `!rr <message id> <emoji> <role name>`');
+      return message.reply('usage: `!rr <message id> <emoji> <role name>`');
     }
 
     const emojiClean = emojiRaw.replace(/:/g, '');
     const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-    if (!role) return message.reply(`❌ Could not find a role named "${roleName}".`);
+    if (!role) return message.reply(`couldn't find a role named "${roleName}".`);
 
     let targetMsg;
     try {
       targetMsg = await message.channel.messages.fetch(msgId);
     } catch {
-      return message.reply('❌ Could not find that message in this channel.');
+      return message.reply('Could not find that message in this channel.');
     }
 
     let reactedEmoji;
@@ -1551,7 +1540,7 @@ if (command === 'stoploop') {
       const reaction = await targetMsg.react(emojiClean);
       reactedEmoji = reaction.emoji;
     } catch {
-      return message.reply(`❌ Could not react with that emoji. Make sure it's a valid emoji the bot can use.`);
+      return message.reply(`Could not react with that emoji. Make sure it's a valid emoji the bot can use.`);
     }
 
     const emojiKey = reactedEmoji.id
@@ -1563,24 +1552,24 @@ if (command === 'stoploop') {
 
     await saveReactionRole(msgId, emojiKey, role.id);
 
-    return message.reply(`✅ Reaction role set! Users who react with ${emojiRaw} on that message will get the **${roleName}** role.`);
+    return message.reply(`reaction role set. users who react with ${emojiRaw} will get the **${roleName}** role.`);
   }
 
   // ── !updateset ────────────────────────────────────────────────────────────
   if (command === 'updateset') {
-    if (!requireAdmin(message)) return message.reply('❌ You need Administrator permission to use this command.');
+    if (!requireAdmin(message)) return message.reply('admin only.');
 
     const embed = new EmbedBuilder()
       .setColor(0xFF69B4)
       .setDescription(
         `꩜ ────────────────── ꩜\n` +
         `\n` +
-        `🤡  **server updates**\n` +
+        `**server updates**\n` +
         `\n` +
         `react below to receive a dm whenever\n` +
         `a new channel is added to the server\n` +
         `\n` +
-        `✦ make sure your dms are open ✦\n` +
+        `make sure your dms are open\n` +
         `\n` +
         `unreact at any time to opt out\n` +
         `\n` +
