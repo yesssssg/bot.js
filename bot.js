@@ -607,7 +607,7 @@ function extractBypassableLinks(content) {
 
 function bypassLink(url) {
   return new Promise((resolve, reject) => {
-    const apiUrl = `https://bypass.vip/api?url=${encodeURIComponent(url)}`;
+    const apiUrl = `https://api.bypass.vip/bypass?url=${encodeURIComponent(url)}`;
     https.get(apiUrl, {
       headers: { 'User-Agent': 'bot', 'Accept': 'application/json' }
     }, (res) => {
