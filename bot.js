@@ -13,6 +13,31 @@ const client = new Client({
   ],
 });
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const PREFIX = '!';
+const AUTO_DELETE_MS = 30 * 1000; // 30 seconds for ALL bot messages and command messages
+const LINK_DELETE_MS = 2 * 60 * 1000;
+
+// ─── Auto-delete helpers ──────────────────────────────────────────────────────
+
+function deleteAfter(msg, ms = AUTO_DELETE_MS) {
+  if (!msg) return;
+  setTimeout(() => msg.delete().catch(() => {}), ms);
+}
+
+function deleteCommand(message) {
+  deleteAfter(message, AUTO_DELETE_MS);
+}
+
+// Wraps message.reply() and auto-deletes both the reply and the command
+async function reply(message, content, deleteCmd = true) {
+  const r = await message.reply(content).catch(() => null);
+  if (r) deleteAfter(r);
+  if (deleteCmd) deleteCommand(message);
+  return r;
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const everyonePingIntervals = new Map();
@@ -20,7 +45,7 @@ const userPingIntervals = new Map();
 const pingJoinChannels = new Map();
 const spamTracker = new Map();
 
-// Reaction roles: { messageId -> { emoji -> roleName } }
+// Reaction roles: { messageId -> { emoji -> roleId } }
 const reactionRoles = new Map();
 
 // Update subscriptions
@@ -37,14 +62,10 @@ const seenRedditLinks = new Set();
 // Data channel
 const DATA_CHANNEL_ID = '1497467308010901525';
 
-// X Auto Poster config
-const XPOSTER_PATH = path.join(__dirname, '..', 'xposter');
-
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // AUTO BYPASS CONFIG
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// Domains that should be auto-bypassed when detected in any message
 const BYPASS_DOMAINS = [
   'speedy-links.com',
   'linkvertise.com',
@@ -106,10 +127,7 @@ const updateSubUserHandles = new Map();
 async function loadDataFromChannel() {
   try {
     dataChannel = await client.channels.fetch(DATA_CHANNEL_ID);
-    if (!dataChannel) {
-      console.error('Data channel not found!');
-      return;
-    }
+    if (!dataChannel) { console.error('Data channel not found!'); return; }
 
     let lastId = null;
     let allMessages = [];
@@ -134,17 +152,14 @@ async function loadDataFromChannel() {
         postCounts.set(userId, count);
         dataMessages.set(userId, msg);
       }
-
       if (msg.content.startsWith('XLINK:')) {
         const tweetId = msg.content.slice(6).trim();
         if (tweetId) seenXLinks.add(tweetId);
       }
-
       if (msg.content.startsWith('RLINK:')) {
         const postId = msg.content.slice(6).trim();
         if (postId) seenRedditLinks.add(postId);
       }
-
       if (msg.content.startsWith('RROLE|')) {
         const parts = msg.content.slice(6).split('|');
         if (parts.length !== 3) continue;
@@ -153,7 +168,6 @@ async function loadDataFromChannel() {
         reactionRoles.get(msgId)[emojiKey] = roleId;
         reactionRoleMessages.set(msgId + '|' + emojiKey, msg);
       }
-
       if (msg.content.startsWith('UPMSG:')) {
         const parts = msg.content.split(':');
         if (parts.length >= 5) {
@@ -163,7 +177,6 @@ async function loadDataFromChannel() {
           updateSubMsgHandle = msg;
         }
       }
-
       if (msg.content.startsWith('UPSUB:')) {
         const userId = msg.content.slice(6).trim();
         if (userId) {
@@ -195,9 +208,7 @@ async function saveUserCount(userId, count) {
       const newMsg = await dataChannel.send(content);
       dataMessages.set(userId, newMsg);
     }
-  } catch (e) {
-    console.error('Failed to save user count:', e);
-  }
+  } catch (e) { console.error('Failed to save user count:', e); }
 }
 
 async function saveSeenLink(tweetId) {
@@ -205,9 +216,7 @@ async function saveSeenLink(tweetId) {
     if (!dataChannel) return;
     seenXLinks.add(tweetId);
     await dataChannel.send(`XLINK:${tweetId}`);
-  } catch (e) {
-    console.error('Failed to save seen link:', e);
-  }
+  } catch (e) { console.error('Failed to save seen link:', e); }
 }
 
 async function saveSeenRedditLink(postId) {
@@ -215,9 +224,7 @@ async function saveSeenRedditLink(postId) {
     if (!dataChannel) return;
     seenRedditLinks.add(postId);
     await dataChannel.send(`RLINK:${postId}`);
-  } catch (e) {
-    console.error('Failed to save seen Reddit link:', e);
-  }
+  } catch (e) { console.error('Failed to save seen Reddit link:', e); }
 }
 
 async function saveReactionRole(msgId, emojiKey, roleId) {
@@ -233,9 +240,7 @@ async function saveReactionRole(msgId, emojiKey, roleId) {
       const newMsg = await dataChannel.send(content);
       reactionRoleMessages.set(key, newMsg);
     }
-  } catch (e) {
-    console.error('Failed to save reaction role:', e);
-  }
+  } catch (e) { console.error('Failed to save reaction role:', e); }
 }
 
 async function saveUpdateSubMessage(messageId, channelId, guildId, emojiKey) {
@@ -248,9 +253,7 @@ async function saveUpdateSubMessage(messageId, channelId, guildId, emojiKey) {
     } else {
       updateSubMsgHandle = await dataChannel.send(content);
     }
-  } catch (e) {
-    console.error('Failed to save update sub message:', e);
-  }
+  } catch (e) { console.error('Failed to save update sub message:', e); }
 }
 
 async function addUpdateSubscriber(userId) {
@@ -258,12 +261,9 @@ async function addUpdateSubscriber(userId) {
     if (updateSubscribers.has(userId)) return;
     updateSubscribers.add(userId);
     if (!dataChannel) return;
-    const content = `UPSUB:${userId}`;
-    const newMsg = await dataChannel.send(content);
+    const newMsg = await dataChannel.send(`UPSUB:${userId}`);
     updateSubUserHandles.set(userId, newMsg);
-  } catch (e) {
-    console.error('Failed to add update subscriber:', e);
-  }
+  } catch (e) { console.error('Failed to add update subscriber:', e); }
 }
 
 async function removeUpdateSubscriber(userId) {
@@ -274,9 +274,7 @@ async function removeUpdateSubscriber(userId) {
       await updateSubUserHandles.get(userId).delete().catch(() => {});
       updateSubUserHandles.delete(userId);
     }
-  } catch (e) {
-    console.error('Failed to remove update subscriber:', e);
-  }
+  } catch (e) { console.error('Failed to remove update subscriber:', e); }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -314,17 +312,11 @@ function findClosestChannel(guild, query) {
     let nameIdx = 0;
     for (const char of q) {
       while (nameIdx < name.length && name[nameIdx] !== char) nameIdx++;
-      if (nameIdx < name.length) {
-        score++;
-        nameIdx++;
-      }
+      if (nameIdx < name.length) { score++; nameIdx++; }
     }
     if (name.startsWith(q)) score += 5;
     if (name.includes(q)) score += 3;
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = channel;
-    }
+    if (score > bestScore) { bestScore = score; bestMatch = channel; }
   }
 
   return bestScore > 0 ? bestMatch : null;
@@ -388,12 +380,8 @@ function fetchRedditURL(url) {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return fetchRedditURL(res.headers.location).then(resolve).catch(reject);
       }
-      if (res.statusCode === 429) {
-        return reject(new Error('Reddit rate limited (429)'));
-      }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`Reddit returned status ${res.statusCode}`));
-      }
+      if (res.statusCode === 429) return reject(new Error('Reddit rate limited (429)'));
+      if (res.statusCode !== 200) return reject(new Error(`Reddit returned status ${res.statusCode}`));
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => resolve(data));
@@ -422,16 +410,16 @@ async function checkXLink(message, url) {
     const currentCount = postCounts.get(userId) || 0;
 
     if (seenXLinks.has(tweetId)) {
-      return message.reply(`sent already\ncurrent post count: ${currentCount}/${X_WATCH.POSTS_REQUIRED}`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      const r = await message.reply(`sent already\ncurrent post count: ${currentCount}/${X_WATCH.POSTS_REQUIRED}`);
+      deleteAfter(r, LINK_DELETE_MS);
+      return;
     }
 
     const apiUrl = `https://api.fxtwitter.com/status/${tweetId}`;
     const raw = await fetchURL(apiUrl);
 
     let json;
-    try {
-      json = JSON.parse(raw);
-    } catch {
+    try { json = JSON.parse(raw); } catch {
       console.error('fxtwitter returned non-JSON:', raw.slice(0, 200));
       return;
     }
@@ -460,30 +448,30 @@ async function checkXLink(message, url) {
 
       if (hasRole) {
         await saveSeenLink(tweetId);
-        return message.reply(X_WATCH.ALREADY_DONE_REPLY).then(r => deleteAfter(r, LINK_DELETE_MS));
+        const r = await message.reply(X_WATCH.ALREADY_DONE_REPLY);
+        deleteAfter(r, LINK_DELETE_MS);
+        return;
       }
 
       await saveSeenLink(tweetId);
-
       const newCount = currentCount + 1;
       postCounts.set(userId, newCount);
       await saveUserCount(userId, newCount);
 
       if (newCount >= X_WATCH.POSTS_REQUIRED) {
         const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === X_WATCH.REWARD_ROLE.toLowerCase());
-        if (role && member) {
-          await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
-        }
-        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts — role given!`).then(r => deleteAfter(r, LINK_DELETE_MS));
+        if (role && member) await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
+        const r = await message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts — role given!`);
+        deleteAfter(r, LINK_DELETE_MS);
       } else {
-        return message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
+        const r = await message.reply(`${X_WATCH.REPLY_PREFIX}, ${newCount}/${X_WATCH.POSTS_REQUIRED} posts`);
+        deleteAfter(r, LINK_DELETE_MS);
       }
-
     } else {
       await saveSeenLink(tweetId);
-      await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      const r = await message.reply(`${X_WATCH.WRONG_REPLY}\npost exactly what is in <#${X_WATCH.GUIDE_CHANNEL_ID}>`);
+      deleteAfter(r, LINK_DELETE_MS);
     }
-
   } catch (e) {
     console.error('Failed to check X link:', e);
   }
@@ -498,21 +486,23 @@ async function checkRedditLink(message, url) {
   try {
     const postId = extractRedditPostId(url);
     if (!postId) {
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      const r = await message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+      deleteAfter(r, LINK_DELETE_MS);
+      return;
     }
 
     const userId = message.author.id;
     const currentCount = postCounts.get(userId) || 0;
 
     if (seenRedditLinks.has(postId)) {
-      return message.reply(`sent already\ncurrent post count: ${currentCount}/${REDDIT_WATCH.POSTS_REQUIRED}`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      const r = await message.reply(`sent already\ncurrent post count: ${currentCount}/${REDDIT_WATCH.POSTS_REQUIRED}`);
+      deleteAfter(r, LINK_DELETE_MS);
+      return;
     }
 
     const jsonUrl = `https://www.reddit.com/comments/${postId}.json`;
     let raw;
-    try {
-      raw = await fetchRedditURL(jsonUrl);
-    } catch (e) {
+    try { raw = await fetchRedditURL(jsonUrl); } catch (e) {
       console.error('Failed to fetch Reddit post:', e);
       raw = null;
     }
@@ -520,11 +510,7 @@ async function checkRedditLink(message, url) {
     let postData = null;
     if (raw) {
       let json;
-      try {
-        json = JSON.parse(raw);
-      } catch {
-        json = null;
-      }
+      try { json = JSON.parse(raw); } catch { json = null; }
       postData = json?.[0]?.data?.children?.[0]?.data || null;
     }
 
@@ -534,7 +520,9 @@ async function checkRedditLink(message, url) {
       const hasRole2 = member2?.roles.cache.some(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
       if (hasRole2) {
         await saveSeenRedditLink(postId);
-        return message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY).then(r => deleteAfter(r, LINK_DELETE_MS));
+        const r = await message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY);
+        deleteAfter(r, LINK_DELETE_MS);
+        return;
       }
       await saveSeenRedditLink(postId);
       const newCount2 = currentCount + 1;
@@ -543,9 +531,13 @@ async function checkRedditLink(message, url) {
       if (newCount2 >= REDDIT_WATCH.POSTS_REQUIRED) {
         const role2 = message.guild.roles.cache.find(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
         if (role2 && member2) await member2.roles.add(role2).catch(() => {});
-        return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount2}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`).then(r => deleteAfter(r, LINK_DELETE_MS));
+        const r = await message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount2}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`);
+        deleteAfter(r, LINK_DELETE_MS);
+        return;
       }
-      return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount2}/${REDDIT_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      const r = await message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount2}/${REDDIT_WATCH.POSTS_REQUIRED} posts`);
+      deleteAfter(r, LINK_DELETE_MS);
+      return;
     }
 
     const postTitle = (postData.title || '').trim().toLowerCase();
@@ -558,7 +550,9 @@ async function checkRedditLink(message, url) {
 
     if (canRead && !titleMatch && !selftextMatch) {
       await saveSeenRedditLink(postId);
-      return message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      const r = await message.reply(`${REDDIT_WATCH.WRONG_REPLY}\npost exactly what is in <#${REDDIT_WATCH.GUIDE_CHANNEL_ID}>`);
+      deleteAfter(r, LINK_DELETE_MS);
+      return;
     }
 
     const member = await message.guild.members.fetch(userId).catch(() => null);
@@ -566,31 +560,31 @@ async function checkRedditLink(message, url) {
 
     if (hasRole) {
       await saveSeenRedditLink(postId);
-      return message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY).then(r => deleteAfter(r, LINK_DELETE_MS));
+      const r = await message.reply(REDDIT_WATCH.ALREADY_DONE_REPLY);
+      deleteAfter(r, LINK_DELETE_MS);
+      return;
     }
 
     await saveSeenRedditLink(postId);
-
     const newCount = currentCount + 1;
     postCounts.set(userId, newCount);
     await saveUserCount(userId, newCount);
 
     if (newCount >= REDDIT_WATCH.POSTS_REQUIRED) {
       const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === REDDIT_WATCH.REWARD_ROLE.toLowerCase());
-      if (role && member) {
-        await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
-      }
-      return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      if (role && member) await member.roles.add(role).catch(e => console.error('Failed to add role:', e));
+      const r = await message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts — role given!`);
+      deleteAfter(r, LINK_DELETE_MS);
     } else {
-      return message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts`).then(r => deleteAfter(r, LINK_DELETE_MS));
+      const r = await message.reply(`${REDDIT_WATCH.REPLY_PREFIX}, ${newCount}/${REDDIT_WATCH.POSTS_REQUIRED} posts`);
+      deleteAfter(r, LINK_DELETE_MS);
     }
-
   } catch (e) {
     console.error('Failed to check Reddit link:', e);
   }
 }
 
-// ─── Auto Bypass ──────────────────────────────────────────────────────────────
+// ─── Auto Bypass (bypass.city) ────────────────────────────────────────────────
 
 function extractBypassableLinks(content) {
   const urlRegex = /https?:\/\/[^\s<>"\]]+/gi;
@@ -599,30 +593,40 @@ function extractBypassableLinks(content) {
     try {
       const hostname = new URL(url).hostname.replace(/^www\./, '');
       return BYPASS_DOMAINS.some(domain => hostname === domain || hostname.endsWith('.' + domain));
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   });
 }
 
+// bypass.city API: GET https://bypass.city/bypass?bypass=<encoded_url>
+// Returns JSON: { status: "success", bypassed_link: "..." } or { status: "error", error: "..." }
 function bypassLink(url) {
   return new Promise((resolve, reject) => {
-    const apiUrl = `https://api.bypass.vip/bypass?url=${encodeURIComponent(url)}`;
+    const apiUrl = `https://bypass.city/bypass?bypass=${encodeURIComponent(url)}`;
     https.get(apiUrl, {
-      headers: { 'User-Agent': 'bot', 'Accept': 'application/json' }
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Discord-Bot/1.0)',
+        'Accept': 'application/json',
+      }
     }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return bypassLink(res.headers.location).then(resolve).catch(reject);
+      }
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
-          if (json.status === 'success' && json.result) {
-            resolve(json.result);
+          // bypass.city returns { status, bypassed_link } on success
+          if (json.status === 'success' && json.bypassed_link) {
+            resolve(json.bypassed_link);
+          } else if (json.bypassed_link) {
+            // some responses omit status but still return link
+            resolve(json.bypassed_link);
           } else {
-            reject(new Error(json.error || json.message || `API returned status: ${json.status}`));
+            reject(new Error(json.error || json.message || `API status: ${json.status || 'unknown'}`));
           }
         } catch {
-          reject(new Error(`Invalid response from bypass API: ${data.slice(0, 100)}`));
+          reject(new Error(`Invalid response from bypass.city: ${data.slice(0, 150)}`));
         }
       });
     }).on('error', reject);
@@ -630,12 +634,16 @@ function bypassLink(url) {
 }
 
 async function handleAutoBypass(message, links) {
+  // Delete the triggering message after 30s as well
+  deleteAfter(message);
   for (const link of links) {
     try {
       const bypassed = await bypassLink(link);
-      await message.reply(`🔓 **bypassed**\n${bypassed}`);
+      const r = await message.reply(`🔓 **bypassed**\n${bypassed}`);
+      deleteAfter(r);
     } catch (e) {
-      await message.reply(`❌ failed to bypass \`${link}\`\nerror: ${e.message}`);
+      const r = await message.reply(`❌ failed to bypass \`${link}\`\nerror: ${e.message}`);
+      deleteAfter(r);
     }
   }
 }
@@ -653,7 +661,7 @@ async function handleAntiSpam(message) {
   if (isFormatSpam(message.content)) {
     await message.delete().catch(() => {});
     const warn = await message.channel.send(`<@${userId}> no spamming`).catch(() => null);
-    if (warn) setTimeout(() => warn.delete().catch(() => {}), 4000);
+    if (warn) deleteAfter(warn);
     return true;
   }
 
@@ -671,9 +679,7 @@ async function handleAntiSpam(message) {
         Date.now() - m.createdTimestamp < WINDOW + 1000
       );
       await message.channel.bulkDelete(toDelete, true).catch(() => {});
-    } catch (e) {
-      console.error('Failed to delete spam messages:', e);
-    }
+    } catch (e) { console.error('Failed to delete spam messages:', e); }
 
     spamTracker.set(userId, []);
 
@@ -689,16 +695,12 @@ async function handleAntiSpam(message) {
       pingWarnTracker.set(userId, []);
       try {
         const member = await message.guild.members.fetch(userId).catch(() => null);
-        if (member) {
-          await member.timeout(60 * 1000, 'Repeated spamming').catch(e => console.error('Failed to timeout:', e));
-        }
-      } catch (e) {
-        console.error('Timeout error:', e);
-      }
+        if (member) await member.timeout(60 * 1000, 'Repeated spamming').catch(e => console.error('Failed to timeout:', e));
+      } catch (e) { console.error('Timeout error:', e); }
     }
 
     const warn = await message.channel.send(`<@${userId}> no spamming`).catch(() => null);
-    if (warn) setTimeout(() => warn.delete().catch(() => {}), 4000);
+    if (warn) deleteAfter(warn);
     return true;
   }
 
@@ -712,13 +714,6 @@ function containsInviteLink(content) {
     lower.includes('discord.com/invite/') ||
     lower.includes('discordapp.com')
   );
-}
-
-const PREFIX = '!';
-const LINK_DELETE_MS = 2 * 60 * 1000;
-
-function deleteAfter(msg, ms) {
-  setTimeout(() => msg.delete().catch(() => {}), ms);
 }
 
 // ─── Multi-Account Helpers ────────────────────────────────────────────────────
@@ -739,6 +734,7 @@ async function pickAccount(message, statusMsg) {
   const avail = availableAccounts();
   if (avail.length === 0) {
     await statusMsg.edit('no tokens configured. set TOKEN1 and/or TOKEN2 in railway variables.');
+    deleteAfter(statusMsg);
     return null;
   }
   if (avail.length === 1) {
@@ -757,18 +753,18 @@ async function pickAccount(message, statusMsg) {
     await collected.first().delete().catch(() => {});
     if (!getToken(choice)) {
       await statusMsg.edit(`TOKEN${choice} is not set in railway variables.`);
+      deleteAfter(statusMsg);
       return null;
     }
     return choice;
   } catch {
     await statusMsg.edit('no account selected — cancelled.');
+    deleteAfter(statusMsg);
     return null;
   }
 }
 
-// Variable to trace the detached process handler globally
 let altStakeoutProcess = null;
-
 
 // ─── Join Ping Handler ────────────────────────────────────────────────────────
 
@@ -780,18 +776,15 @@ client.on('guildMemberAdd', async (member) => {
     if (!channel) return;
     const ping = await channel.send(`<@${member.id}>`);
     ping.delete().catch(() => {});
-  } catch (e) {
-    console.error('Failed to send join ping:', e);
-  }
+  } catch (e) { console.error('Failed to send join ping:', e); }
 });
 
-// ─── Channel Create → Post in Updates Channel ────────────────────────────────
+// ─── Channel Create → Post in Updates Channel ─────────────────────────────────
 
 const UPDATES_CHANNEL_ID = '1500588941034655955';
 
 client.on('channelCreate', async (channel) => {
   if (!channel.guild) return;
-
   try {
     const updatesChannel = await client.channels.fetch(UPDATES_CHANNEL_ID).catch(() => null);
     if (!updatesChannel) return;
@@ -808,16 +801,13 @@ client.on('channelCreate', async (channel) => {
       );
 
     await updatesChannel.send({ embeds: [embed] });
-  } catch (e) {
-    console.error('Failed to post channel update:', e);
-  }
+  } catch (e) { console.error('Failed to post channel update:', e); }
 });
 
 // ─── Message Handler ──────────────────────────────────────────────────────────
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-
   if (message.channel.id === DATA_CHANNEL_ID) return;
 
   const isAdmin = message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
@@ -843,20 +833,18 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ── X Link Checker ────────────────────────────────────────────────────────
   const xLinkRegex = /https?:\/\/(?:twitter\.com|x\.com)\/\w+\/status\/\d+[^\s]*/gi;
   const xLinks = message.content.match(xLinkRegex);
   if (xLinks) {
-    for (const link of xLinks) {
-      await checkXLink(message, link);
-    }
+    for (const link of xLinks) await checkXLink(message, link);
   }
 
+  // ── Reddit Link Checker ───────────────────────────────────────────────────
   const redditLinkRegex = /https?:\/\/(?:www\.)?reddit\.com\/(?:r\/[^/\s]+\/)?comments\/[a-z0-9]+[^\s]*/gi;
   const redditLinks = message.content.match(redditLinkRegex);
   if (redditLinks) {
-    for (const link of redditLinks) {
-      await checkRedditLink(message, link);
-    }
+    for (const link of redditLinks) await checkRedditLink(message, link);
   }
 
   if (!message.content.startsWith(PREFIX)) return;
@@ -866,25 +854,25 @@ client.on('messageCreate', async (message) => {
 
   // ── !xpost ────────────────────────────────────────────────────────────────
   if (command === 'xpost') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
 
     const postCount = parseInt(args[0]);
     const delayStr = args[1] || '5s';
 
     if (!postCount || postCount < 1) {
-      return message.reply('usage: `!xpost <number> <delay>`\nexample: `!xpost 1 10s`');
+      await reply(message, 'usage: `!xpost <number> <delay>`\nexample: `!xpost 1 10s`');
+      return;
     }
 
     const delayMs = parseCooldown(delayStr);
-    if (!delayMs) return message.reply('invalid delay. examples: 5s, 10s, 30s');
+    if (!delayMs) { await reply(message, 'invalid delay. examples: 5s, 10s, 30s'); return; }
 
-    const statusMsg = await message.reply(`starting ${postCount} post(s)...`);
+    deleteCommand(message);
+    const statusMsg = await message.channel.send(`starting ${postCount} post(s)...`);
+    deleteAfter(statusMsg);
 
     try {
       const XPOSTER_PATH = path.join(__dirname, 'xposter');
-
-      console.log(`[xpost] Attempting to run from: ${XPOSTER_PATH}`);
-
       const child = spawn('node', ['xposter.mjs'], {
         cwd: XPOSTER_PATH,
         env: {
@@ -895,24 +883,12 @@ client.on('messageCreate', async (message) => {
       });
 
       let output = '';
-
-      child.stdout.on('data', (data) => {
-        const text = data.toString().trim();
-        output += text + '\n';
-        console.log('[xposter]', text);
-      });
-
-      child.stderr.on('data', (data) => {
-        const text = data.toString().trim();
-        output += text + '\n';
-        console.error('[xposter]', text);
-      });
-
+      child.stdout.on('data', (data) => { const t = data.toString().trim(); output += t + '\n'; console.log('[xposter]', t); });
+      child.stderr.on('data', (data) => { const t = data.toString().trim(); output += t + '\n'; console.error('[xposter]', t); });
       child.on('error', async (err) => {
         console.error('[xpost] Spawn error:', err);
         await statusMsg.edit(`failed to start poster: ${err.message}`);
       });
-
       child.on('close', async (code) => {
         const lastLines = output.trim().split('\n').slice(-10).join('\n');
         if (code === 0) {
@@ -921,23 +897,23 @@ client.on('messageCreate', async (message) => {
           await statusMsg.edit(`poster crashed (code ${code})\n\`\`\`\n${lastLines}\`\`\``);
         }
       });
-
     } catch (e) {
       console.error('[xpost] Error:', e);
       await statusMsg.edit('error starting poster: ' + e.message);
     }
-
     return;
   }
 
-  // ── X LOOP POSTER ─────────────────────────────────────────────
+  // ── !startloop ────────────────────────────────────────────────────────────
   if (command === 'startloop') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
 
     const delay = parseInt(args[0]) || 60;
-    if (delay < 10) return message.reply('minimum delay is 10 seconds.');
+    if (delay < 10) { await reply(message, 'minimum delay is 10 seconds.'); return; }
 
-    const status = await message.reply(`select an account...`);
+    deleteCommand(message);
+    const status = await message.channel.send(`select an account...`);
+    deleteAfter(status);
 
     const acctNum = await pickAccount(message, status);
     if (!acctNum) return;
@@ -945,12 +921,8 @@ client.on('messageCreate', async (message) => {
     await status.edit(`starting loop with account ${acctNum} — every **${delay}** seconds...`);
 
     try {
-      console.log(`[LOOP] Attempting to import xloop.mjs...`);
       process.env.X_AUTH_TOKEN = getToken(acctNum);
-      const modulePath = './xposter/xloop.mjs';
-      const { startLoop } = await import(modulePath);
-      console.log(`[LOOP] Import successful, starting loop...`);
-
+      const { startLoop } = await import('./xposter/xloop.mjs');
       await startLoop(delay);
       await status.edit(`loop started with account ${acctNum}. posting every **${delay}** seconds. use !stoploop to stop.`);
     } catch (e) {
@@ -960,23 +932,26 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ── !stoploop ─────────────────────────────────────────────────────────────
   if (command === 'stoploop') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
-
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
+    deleteCommand(message);
     try {
       const { stopLoop } = await import('./xposter/xloop.mjs');
       stopLoop();
-      await message.reply('loop stopped.');
+      const r = await message.channel.send('loop stopped.');
+      deleteAfter(r);
     } catch (e) {
       console.error('[LOOP] Stop error:', e);
-      await message.reply('failed to stop loop.');
+      const r = await message.channel.send('failed to stop loop.');
+      deleteAfter(r);
     }
     return;
   }
 
   // ── !disable ──────────────────────────────────────────────────────────────
   if (command === 'disable') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
     let stopped = 0;
     for (const [channelId, data] of everyonePingIntervals) {
       clearInterval(data.interval);
@@ -988,156 +963,166 @@ client.on('messageCreate', async (message) => {
       userPingIntervals.delete(channelId);
       stopped++;
     }
-    if (stopped === 0) return message.reply('no active auto-pings to stop.');
-    return message.reply(`stopped **${stopped}** auto-ping${stopped !== 1 ? 's' : ''}.`);
+    if (stopped === 0) { await reply(message, 'no active auto-pings to stop.'); return; }
+    await reply(message, `stopped **${stopped}** auto-ping${stopped !== 1 ? 's' : ''}.`);
+    return;
   }
 
   // ── !pingjoin ─────────────────────────────────────────────────────────────
   if (command === 'pingjoin') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
     const sub = args[0]?.toLowerCase();
     if (sub === 'enable') {
       pingJoinChannels.set(message.guild.id, message.channel.id);
-      return message.reply(`join pings enabled in this channel.`);
+      await reply(message, `join pings enabled in this channel.`);
+      return;
     }
     if (sub === 'disable') {
-      if (!pingJoinChannels.has(message.guild.id)) return message.reply('join pings are not active.');
+      if (!pingJoinChannels.has(message.guild.id)) { await reply(message, 'join pings are not active.'); return; }
       pingJoinChannels.delete(message.guild.id);
-      return message.reply('join pings disabled.');
+      await reply(message, 'join pings disabled.');
+      return;
     }
-    return message.reply('usage: `!pingjoin enable` or `!pingjoin disable`');
+    await reply(message, 'usage: `!pingjoin enable` or `!pingjoin disable`');
+    return;
   }
 
   // ── !autopingeveryone ─────────────────────────────────────────────────────
   if (command === 'autopingeveryone') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
     const sub = args[0]?.toLowerCase();
     if (sub === 'enable') {
       const cooldownStr = args[1];
-      if (!cooldownStr) return message.reply('usage: `!autopingeveryone enable <cooldown>`');
+      if (!cooldownStr) { await reply(message, 'usage: `!autopingeveryone enable <cooldown>`'); return; }
       const cooldownMs = parseCooldown(cooldownStr);
-      if (!cooldownMs) return message.reply('invalid cooldown.');
+      if (!cooldownMs) { await reply(message, 'invalid cooldown.'); return; }
       if (everyonePingIntervals.has(message.channel.id)) clearInterval(everyonePingIntervals.get(message.channel.id).interval);
       const interval = setInterval(async () => {
         try {
           const p = await message.channel.send('@everyone');
           p.delete().catch(() => {});
-        } catch (e) {
-          console.error(e);
-        }
+        } catch (e) { console.error(e); }
       }, cooldownMs);
       everyonePingIntervals.set(message.channel.id, { interval, cooldownMs });
-      return message.reply(`auto @everyone ping enabled every **${formatCooldown(cooldownMs)}**.`);
+      await reply(message, `auto @everyone ping enabled every **${formatCooldown(cooldownMs)}**.`);
+      return;
     }
     if (sub === 'disable') {
-      if (!everyonePingIntervals.has(message.channel.id)) return message.reply('not active in this channel.');
+      if (!everyonePingIntervals.has(message.channel.id)) { await reply(message, 'not active in this channel.'); return; }
       clearInterval(everyonePingIntervals.get(message.channel.id).interval);
       everyonePingIntervals.delete(message.channel.id);
-      return message.reply('auto @everyone ping disabled.');
+      await reply(message, 'auto @everyone ping disabled.');
+      return;
     }
-    return message.reply('usage: `!autopingeveryone enable <cooldown>` or `!autopingeveryone disable`');
-  }
-
-  // ── ALT TRACKER SURVEILLANCE STAKEOUT LOOP ───────────────────────
-  if (command === 'startaltclone') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
-    if (altStakeoutProcess) return message.reply('alt tracking is already active.');
-
-    const targetAlt = process.env.TARGET_ALT ? process.env.TARGET_ALT.trim() : "jameshandalt67";
-    const appendUrl = args[0] || "";
-
-    const statusMsg = await message.reply('select an account for the stakeout...');
-    const acctNum = await pickAccount(message, statusMsg);
-    if (!acctNum) return;
-
-    message.reply(`alt stakeout started\naccount: \`${acctNum}\`\ntarget: \`@${targetAlt}\`\ninterval: every 1 hour\nappended link: \`${appendUrl || "none"}\``)
-      .then(() => {
-        try {
-          const runDir = path.join(__dirname, 'xposter');
-
-          altStakeoutProcess = spawn('node', ['xloop.mjs'], {
-            cwd: runDir,
-            env: {
-              ...process.env,
-              X_AUTH_TOKEN: getToken(acctNum),
-              TARGET_ALT: targetAlt,
-              EXTRA_LINK: appendUrl
-            }
-          });
-
-          altStakeoutProcess.stdout.on('data', (d) => console.log(`[STAKEOUT OUT]: ${d}`));
-          altStakeoutProcess.stderr.on('data', (d) => console.error(`[STAKEOUT ERR]: ${d}`));
-          altStakeoutProcess.on('close', (c) => {
-            console.log(`[SYSTEM] Stakeout loop tracking killed with code: ${c}`);
-            altStakeoutProcess = null;
-          });
-        } catch (err) {
-          altStakeoutProcess = null;
-          message.reply('System error initializing background loop context: ' + err.message);
-        }
-      });
+    await reply(message, 'usage: `!autopingeveryone enable <cooldown>` or `!autopingeveryone disable`');
     return;
   }
 
-  if (command === 'stopaltclone') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
-    if (!altStakeoutProcess) return message.reply('no active stakeout running.');
+  // ── !startaltclone ────────────────────────────────────────────────────────
+  if (command === 'startaltclone') {
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
+    if (altStakeoutProcess) { await reply(message, 'alt tracking is already active.'); return; }
 
+    const targetAlt = process.env.TARGET_ALT ? process.env.TARGET_ALT.trim() : 'jameshandalt67';
+    const appendUrl = args[0] || '';
+
+    deleteCommand(message);
+    const statusMsg = await message.channel.send('select an account for the stakeout...');
+    deleteAfter(statusMsg);
+
+    const acctNum = await pickAccount(message, statusMsg);
+    if (!acctNum) return;
+
+    const confirmMsg = await message.channel.send(
+      `alt stakeout started\naccount: \`${acctNum}\`\ntarget: \`@${targetAlt}\`\ninterval: every 1 hour\nappended link: \`${appendUrl || 'none'}\``
+    );
+    deleteAfter(confirmMsg);
+
+    try {
+      const runDir = path.join(__dirname, 'xposter');
+      altStakeoutProcess = spawn('node', ['xloop.mjs'], {
+        cwd: runDir,
+        env: {
+          ...process.env,
+          X_AUTH_TOKEN: getToken(acctNum),
+          TARGET_ALT: targetAlt,
+          EXTRA_LINK: appendUrl,
+        }
+      });
+      altStakeoutProcess.stdout.on('data', (d) => console.log(`[STAKEOUT OUT]: ${d}`));
+      altStakeoutProcess.stderr.on('data', (d) => console.error(`[STAKEOUT ERR]: ${d}`));
+      altStakeoutProcess.on('close', (c) => {
+        console.log(`[SYSTEM] Stakeout loop killed with code: ${c}`);
+        altStakeoutProcess = null;
+      });
+    } catch (err) {
+      altStakeoutProcess = null;
+      const r = await message.channel.send('System error initializing background loop context: ' + err.message);
+      deleteAfter(r);
+    }
+    return;
+  }
+
+  // ── !stopaltclone ─────────────────────────────────────────────────────────
+  if (command === 'stopaltclone') {
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
+    if (!altStakeoutProcess) { await reply(message, 'no active stakeout running.'); return; }
     altStakeoutProcess.kill();
     altStakeoutProcess = null;
-    return message.reply('stakeout stopped.');
+    await reply(message, 'stakeout stopped.');
+    return;
   }
 
   // ── !autopinguser ─────────────────────────────────────────────────────────
   if (command === 'autopinguser') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
     const sub = args[0]?.toLowerCase();
     if (sub === 'enable') {
       const userMention = args[1];
       const cooldownStr = args[2];
-      if (!userMention || !cooldownStr) return message.reply('usage: `!autopinguser enable @user <cooldown>`');
+      if (!userMention || !cooldownStr) { await reply(message, 'usage: `!autopinguser enable @user <cooldown>`'); return; }
       const userId = userMention.replace(/[<@!>]/g, '');
       let targetUser;
-      try {
-        targetUser = await message.guild.members.fetch(userId);
-      } catch {
-        return message.reply('Could not find that user.');
+      try { targetUser = await message.guild.members.fetch(userId); } catch {
+        await reply(message, 'Could not find that user.');
+        return;
       }
       const cooldownMs = parseCooldown(cooldownStr);
-      if (!cooldownMs) return message.reply('invalid cooldown.');
+      if (!cooldownMs) { await reply(message, 'invalid cooldown.'); return; }
       if (userPingIntervals.has(message.channel.id)) clearInterval(userPingIntervals.get(message.channel.id).interval);
       const interval = setInterval(async () => {
         try {
           const ping = await message.channel.send(`<@${userId}>`);
           setTimeout(() => ping.delete().catch(() => {}), 500);
-        } catch (e) {
-          console.error(e);
-        }
+        } catch (e) { console.error(e); }
       }, cooldownMs);
       userPingIntervals.set(message.channel.id, { interval, userId, cooldownMs });
-      return message.reply(`auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}**.`);
+      await reply(message, `auto ping for ${targetUser} enabled every **${formatCooldown(cooldownMs)}**.`);
+      return;
     }
     if (sub === 'disable') {
-      if (!userPingIntervals.has(message.channel.id)) return message.reply('not active in this channel.');
+      if (!userPingIntervals.has(message.channel.id)) { await reply(message, 'not active in this channel.'); return; }
       clearInterval(userPingIntervals.get(message.channel.id).interval);
       userPingIntervals.delete(message.channel.id);
-      return message.reply('auto user ping disabled.');
+      await reply(message, 'auto user ping disabled.');
+      return;
     }
-    return message.reply('usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
+    await reply(message, 'usage: `!autopinguser enable @user <cooldown>` or `!autopinguser disable`');
+    return;
   }
 
   // ── !auth ─────────────────────────────────────────────────────────────────
   if (command === 'auth') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
 
     const username = args[0];
     const password = args.slice(1).join(' ');
 
-    if (!username || !password) {
-      return message.reply('usage: `!auth <username> <password>`');
-    }
+    if (!username || !password) { await reply(message, 'usage: `!auth <username> <password>`'); return; }
 
-    const statusMsg = await message.reply('launching browser...');
+    deleteCommand(message);
+    const statusMsg = await message.channel.send('launching browser...');
+    deleteAfter(statusMsg);
 
     let browser = null;
     let page = null;
@@ -1149,7 +1134,7 @@ client.on('messageCreate', async (message) => {
         const { AttachmentBuilder } = await import('discord.js');
         const buf = await page.screenshot({ fullPage: false });
         const attachment = new AttachmentBuilder(buf, { name: 'screen.png' });
-        await message.channel.send({
+        const r = await message.channel.send({
           content:
             `**${label}**\n` +
             `commands:\n` +
@@ -1164,8 +1149,10 @@ client.on('messageCreate', async (message) => {
             `\`cancel\` — abort`,
           files: [attachment]
         });
+        deleteAfter(r);
       } catch (e) {
-        await message.channel.send(`screenshot failed: ${e.message}`).catch(() => {});
+        const r = await message.channel.send(`screenshot failed: ${e.message}`).catch(() => null);
+        if (r) deleteAfter(r);
       }
     };
 
@@ -1181,14 +1168,11 @@ client.on('messageCreate', async (message) => {
         const val = collected.first().content.trim();
         await collected.first().delete().catch(() => {});
         return val;
-      } catch {
-        return null;
-      }
+      } catch { return null; }
     };
 
     try {
       const { chromium } = await import('playwright');
-
       browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--single-process']
@@ -1200,23 +1184,20 @@ client.on('messageCreate', async (message) => {
       });
 
       page = await context.newPage();
-
       await statusMsg.edit('loading x login page...');
       try {
         await page.goto('https://x.com/i/flow/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
         await page.waitForTimeout(3000);
-      } catch (e) {
-        throw new Error(`Page load failed: ${e.message}`);
-      }
+      } catch (e) { throw new Error(`Page load failed: ${e.message}`); }
 
       await sendScreenshot('x login loaded — you are in control');
 
       while (true) {
         const response = await waitForCommand();
-
         if (!response || response.toLowerCase() === 'cancel') {
           await browser.close();
-          return statusMsg.edit('cancelled.');
+          await statusMsg.edit('cancelled.');
+          return;
         }
 
         const lower = response.toLowerCase();
@@ -1225,11 +1206,7 @@ client.on('messageCreate', async (message) => {
           const parts = response.split(' ');
           const x = parseInt(parts[1]);
           const y = parseInt(parts[2]);
-
-          if (isNaN(x) || isNaN(y)) {
-            await statusMsg.edit('invalid. use: `click 450 300`');
-            continue;
-          }
+          if (isNaN(x) || isNaN(y)) { await statusMsg.edit('invalid. use: `click 450 300`'); continue; }
 
           await page.mouse.click(x, y);
           await page.waitForTimeout(800);
@@ -1239,29 +1216,17 @@ client.on('messageCreate', async (message) => {
             if (!el) return null;
             const tag = el.tagName.toLowerCase();
             const isInput = tag === 'input' || tag === 'textarea' || el.getAttribute('contenteditable') === 'true' || el.getAttribute('role') === 'textbox';
-            if (isInput) {
-              return {
-                tag,
-                type: el.getAttribute('type') || '',
-                placeholder: el.getAttribute('placeholder') || '',
-                name: el.getAttribute('name') || '',
-              };
-            }
+            if (isInput) return { tag, type: el.getAttribute('type') || '', placeholder: el.getAttribute('placeholder') || '', name: el.getAttribute('name') || '' };
             return null;
           }, { cx: x, cy: y });
 
           if (clickedInput) {
             activeInput = { x, y, ...clickedInput };
-            await statusMsg.edit(
-              `clicked a text input at ${x}, ${y}\n` +
-              `field: \`${JSON.stringify(clickedInput)}\`\n` +
-              `use \`type: your text\` to type, or \`username\`/\`password\` to auto-fill.`
-            );
+            await statusMsg.edit(`clicked a text input at ${x}, ${y}\nfield: \`${JSON.stringify(clickedInput)}\`\nuse \`type: your text\` to type, or \`username\`/\`password\` to auto-fill.`);
           } else {
             activeInput = null;
             await statusMsg.edit(`clicked at ${x}, ${y}`);
           }
-
           await page.waitForTimeout(1000);
           await sendScreenshot(`after click at ${x}, ${y}`);
           continue;
@@ -1269,13 +1234,8 @@ client.on('messageCreate', async (message) => {
 
         if (lower.startsWith('type:')) {
           const text = response.slice(5).trim();
-          if (!text) {
-            await statusMsg.edit('nothing to type. use: `type: hello world`');
-            continue;
-          }
-          if (!activeInput) {
-            await statusMsg.edit('no input selected — typing at cursor...');
-          }
+          if (!text) { await statusMsg.edit('nothing to type. use: `type: hello world`'); continue; }
+          if (!activeInput) await statusMsg.edit('no input selected — typing at cursor...');
           await page.keyboard.type(text, { delay: 80 });
           await statusMsg.edit(`typed: "${text}"`);
           await page.waitForTimeout(500);
@@ -1347,9 +1307,7 @@ client.on('messageCreate', async (message) => {
             } else {
               await statusMsg.edit('Could not find a password field');
             }
-          } catch (e) {
-            await statusMsg.edit(`Error: ${e.message}`);
-          }
+          } catch (e) { await statusMsg.edit(`Error: ${e.message}`); }
           await page.waitForTimeout(500);
           await sendScreenshot('after password fill');
           continue;
@@ -1366,49 +1324,45 @@ client.on('messageCreate', async (message) => {
         if (lower === 'done') {
           const url = page.url();
           await statusMsg.edit(`current url: \`${url}\` — extracting auth_token...`);
-
           const cookies = await context.cookies();
           const authCookie = cookies.find(c => c.name === 'auth_token');
           await browser.close();
 
           if (!authCookie) {
-            return statusMsg.edit(
-              `\`auth_token\` not found in cookies.\n` +
-              `URL was: \`${url}\`\n` +
-              `You may not be fully logged in yet.`
-            );
+            await statusMsg.edit(`\`auth_token\` not found in cookies.\nURL was: \`${url}\`\nYou may not be fully logged in yet.`);
+            return;
           }
 
           try {
             const dm = await message.author.createDM();
             await dm.send(`auth_token for \`${username}\`:\n\`\`\`\n${authCookie.value}\n\`\`\``);
-            return statusMsg.edit('done. auth_token sent to your dms.');
+            await statusMsg.edit('done. auth_token sent to your dms.');
           } catch {
-            return statusMsg.edit(`got it (dms closed — delete this fast):\n\`\`\`\n${authCookie.value}\n\`\`\``);
+            await statusMsg.edit(`got it (dms closed — delete this fast):\n\`\`\`\n${authCookie.value}\n\`\`\``);
           }
+          return;
         }
 
         await statusMsg.edit(`unknown command: \`${response}\`. use \`s\` for a screenshot.`);
       }
-
     } catch (e) {
       try {
         if (page) {
           const { AttachmentBuilder } = await import('discord.js');
           const buf = await page.screenshot({ fullPage: false });
           const attachment = new AttachmentBuilder(buf, { name: 'error.png' });
-          await message.channel.send({ content: `error: ${e.message}`, files: [attachment] });
+          const r = await message.channel.send({ content: `error: ${e.message}`, files: [attachment] });
+          deleteAfter(r);
         }
       } catch {}
       if (browser) await browser.close().catch(() => {});
       console.error('[!auth] Error:', e);
       await statusMsg.edit(`**Error:** \`${e.message}\``);
     }
-
     return;
   }
 
-  // ── !randommessages [count] [channel] ────────────────────────────────────
+  // ── !randommessages ───────────────────────────────────────────────────────
   if (command === 'randommessages') {
     try {
       let requestedCount = 3;
@@ -1424,19 +1378,25 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      if (isNaN(requestedCount) || requestedCount < 1) return message.reply('usage: `!randommessages [number] [channel name]`');
+      if (isNaN(requestedCount) || requestedCount < 1) {
+        await reply(message, 'usage: `!randommessages [number] [channel name]`');
+        return;
+      }
 
       let targetChannel = message.channel;
       if (channelQuery) {
         const found = findClosestChannel(message.guild, channelQuery);
-        if (!found) return message.reply(`couldn't find a channel matching "${channelQuery}".`);
+        if (!found) { await reply(message, `couldn't find a channel matching "${channelQuery}".`); return; }
         targetChannel = found;
       }
 
       let fetched = await targetChannel.messages.fetch({ limit: 100 });
       let pool = fetched.filter(m => !m.author.bot && m.content.trim().length > 0).map(m => m);
 
-      if (pool.length === 0) return message.reply(`no messages found in ${targetChannel.id !== message.channel.id ? `#${targetChannel.name}` : 'this channel'}.`);
+      if (pool.length === 0) {
+        await reply(message, `no messages found in ${targetChannel.id !== message.channel.id ? `#${targetChannel.name}` : 'this channel'}.`);
+        return;
+      }
 
       const actualCount = Math.min(requestedCount, pool.length);
       const picked = await weightedRandomPick(pool, actualCount, message.guild);
@@ -1445,21 +1405,28 @@ client.on('messageCreate', async (message) => {
       const header = `${picked.length} random message${picked.length !== 1 ? 's' : ''}${sourceNote}:\n`;
       const lines = picked.map(m => `${m.author.username}\n${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`).join('\n\n');
 
-      return message.reply(header + lines);
+      await reply(message, header + lines);
     } catch (e) {
       console.error(e);
-      return message.reply('failed to fetch messages.');
+      await reply(message, 'failed to fetch messages.');
     }
+    return;
   }
 
   // ── !purge ────────────────────────────────────────────────────────────────
   if (command === 'purge') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
-    if (!message.channel.permissionsFor(message.guild.members.me).has(PermissionsBitField.Flags.ManageMessages)) return message.reply('I need Manage Messages permission.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
+    if (!message.channel.permissionsFor(message.guild.members.me).has(PermissionsBitField.Flags.ManageMessages)) {
+      await reply(message, 'I need Manage Messages permission.');
+      return;
+    }
 
     const excludeIndex = args.indexOf('--exclude');
     const count = parseInt(args[0]);
-    if (isNaN(count) || count < 1 || count > 100) return message.reply('usage: `!purge <1-100> [--exclude @user1 @user2 ...]`');
+    if (isNaN(count) || count < 1 || count > 100) {
+      await reply(message, 'usage: `!purge <1-100> [--exclude @user1 @user2 ...]`');
+      return;
+    }
 
     const excludedIds = new Set();
     if (excludeIndex !== -1) {
@@ -1474,78 +1441,90 @@ client.on('messageCreate', async (message) => {
       let fetched = await message.channel.messages.fetch({ limit: 100 });
       const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
       let toDelete = fetched.filter(m => !excludedIds.has(m.author.id) && m.createdTimestamp > twoWeeksAgo).map(m => m).slice(0, count);
-      if (toDelete.length === 0) return message.channel.send('no messages to delete.');
+      if (toDelete.length === 0) {
+        const r = await message.channel.send('no messages to delete.');
+        deleteAfter(r);
+        return;
+      }
       await message.channel.bulkDelete(toDelete, true);
       const excludeNote = excludedIds.size > 0 ? ` (excluded ${excludedIds.size} user${excludedIds.size > 1 ? 's' : ''})` : '';
-      const reply = await message.channel.send(`deleted **${toDelete.length}** message${toDelete.length !== 1 ? 's' : ''}${excludeNote}.`);
-      setTimeout(() => reply.delete().catch(() => {}), 4000);
+      const reply2 = await message.channel.send(`deleted **${toDelete.length}** message${toDelete.length !== 1 ? 's' : ''}${excludeNote}.`);
+      deleteAfter(reply2);
     } catch (e) {
       console.error(e);
-      message.channel.send('Failed to delete messages. Make sure messages are not older than 14 days.').catch(() => {});
+      const r = await message.channel.send('Failed to delete messages. Make sure messages are not older than 14 days.').catch(() => null);
+      if (r) deleteAfter(r);
     }
+    return;
   }
 
   // ── !kick ─────────────────────────────────────────────────────────────────
   if (command === 'kick') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
-    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.KickMembers)) return message.reply('I need Kick Members permission.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
+    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.KickMembers)) {
+      await reply(message, 'I need Kick Members permission.');
+      return;
+    }
 
     const userMention = args[0];
-    if (!userMention) return message.reply('usage: `!kick @user [reason]`');
+    if (!userMention) { await reply(message, 'usage: `!kick @user [reason]`'); return; }
 
     const userId = userMention.replace(/[<@!>]/g, '');
     const reason = args.slice(1).join(' ') || 'No reason provided';
 
     let member;
-    try {
-      member = await message.guild.members.fetch(userId);
-    } catch {
-      return message.reply('Could not find that user.');
+    try { member = await message.guild.members.fetch(userId); } catch {
+      await reply(message, 'Could not find that user.');
+      return;
     }
 
-    if (!member.kickable) return message.reply('I cannot kick this user. They may have a higher role than me.');
+    if (!member.kickable) { await reply(message, 'I cannot kick this user. They may have a higher role than me.'); return; }
 
     try {
       await member.kick(reason);
-      return message.reply(`**${member.user.tag}** kicked. reason: ${reason}`);
+      await reply(message, `**${member.user.tag}** kicked. reason: ${reason}`);
     } catch (e) {
       console.error('Failed to kick member:', e);
-      return message.reply('Failed to kick that user.');
+      await reply(message, 'Failed to kick that user.');
     }
+    return;
   }
 
   // ── !ban ──────────────────────────────────────────────────────────────────
   if (command === 'ban') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
-    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('I need Ban Members permission.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
+    if (!message.guild.members.me.permissions.has(PermissionsBitField.Flags.BanMembers)) {
+      await reply(message, 'I need Ban Members permission.');
+      return;
+    }
 
     const userMention = args[0];
-    if (!userMention) return message.reply('usage: `!ban @user [reason]`');
+    if (!userMention) { await reply(message, 'usage: `!ban @user [reason]`'); return; }
 
     const userId = userMention.replace(/[<@!>]/g, '');
     const reason = args.slice(1).join(' ') || 'No reason provided';
 
     let member;
-    try {
-      member = await message.guild.members.fetch(userId);
-    } catch {
-      return message.reply('Could not find that user.');
+    try { member = await message.guild.members.fetch(userId); } catch {
+      await reply(message, 'Could not find that user.');
+      return;
     }
 
-    if (!member.bannable) return message.reply('I cannot ban this user. They may have a higher role than me.');
+    if (!member.bannable) { await reply(message, 'I cannot ban this user. They may have a higher role than me.'); return; }
 
     try {
       await member.ban({ reason, deleteMessageSeconds: 0 });
-      return message.reply(`**${member.user.tag}** banned. reason: ${reason}`);
+      await reply(message, `**${member.user.tag}** banned. reason: ${reason}`);
     } catch (e) {
       console.error('Failed to ban member:', e);
-      return message.reply('Failed to ban that user.');
+      await reply(message, 'Failed to ban that user.');
     }
+    return;
   }
 
   // ── !fm ───────────────────────────────────────────────────────────────────
   if (command === 'fm') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
 
     const embed = new EmbedBuilder()
       .setColor(0xFFB6C1)
@@ -1589,35 +1568,36 @@ client.on('messageCreate', async (message) => {
 
   // ── !post ─────────────────────────────────────────────────────────────────
   if (command === 'post') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
     const text = args.join(' ');
-    if (!text) return message.reply('usage: `!post <text>`');
+    if (!text) { await reply(message, 'usage: `!post <text>`'); return; }
     X_WATCH.TARGET_TEXT = text;
     REDDIT_WATCH.TARGET_TEXT = text;
-    return message.reply(`target text updated to: **${text}**`);
+    await reply(message, `target text updated to: **${text}**`);
+    return;
   }
 
   // ── !rr ───────────────────────────────────────────────────────────────────
   if (command === 'rr') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
 
     const msgId = args[0];
     const emojiRaw = args[1];
     const roleName = args.slice(2).join(' ');
 
     if (!msgId || !emojiRaw || !roleName) {
-      return message.reply('usage: `!rr <message id> <emoji> <role name>`');
+      await reply(message, 'usage: `!rr <message id> <emoji> <role name>`');
+      return;
     }
 
     const emojiClean = emojiRaw.replace(/:/g, '');
     const role = message.guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase());
-    if (!role) return message.reply(`couldn't find a role named "${roleName}".`);
+    if (!role) { await reply(message, `couldn't find a role named "${roleName}".`); return; }
 
     let targetMsg;
-    try {
-      targetMsg = await message.channel.messages.fetch(msgId);
-    } catch {
-      return message.reply('Could not find that message in this channel.');
+    try { targetMsg = await message.channel.messages.fetch(msgId); } catch {
+      await reply(message, 'Could not find that message in this channel.');
+      return;
     }
 
     let reactedEmoji;
@@ -1625,7 +1605,8 @@ client.on('messageCreate', async (message) => {
       const reaction = await targetMsg.react(emojiClean);
       reactedEmoji = reaction.emoji;
     } catch {
-      return message.reply(`Could not react with that emoji. Make sure it's a valid emoji the bot can use.`);
+      await reply(message, `Could not react with that emoji. Make sure it's a valid emoji the bot can use.`);
+      return;
     }
 
     const emojiKey = reactedEmoji.id
@@ -1636,13 +1617,13 @@ client.on('messageCreate', async (message) => {
     reactionRoles.get(msgId)[emojiKey] = role.id;
 
     await saveReactionRole(msgId, emojiKey, role.id);
-
-    return message.reply(`reaction role set. users who react with ${emojiRaw} will get the **${roleName}** role.`);
+    await reply(message, `reaction role set. users who react with ${emojiRaw} will get the **${roleName}** role.`);
+    return;
   }
 
   // ── !updateset ────────────────────────────────────────────────────────────
   if (command === 'updateset') {
-    if (!requireAdmin(message)) return message.reply('admin only.');
+    if (!requireAdmin(message)) { await reply(message, 'admin only.'); return; }
 
     const embed = new EmbedBuilder()
       .setColor(0xFF69B4)
@@ -1687,7 +1668,6 @@ client.on('messageCreate', async (message) => {
     };
 
     await saveUpdateSubMessage(sent.id, message.channel.id, message.guild.id, emojiKey);
-
     return;
   }
 });
@@ -1712,12 +1692,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
   const dbg = (msg) => dataChannel?.send(`[RR DEBUG] ${msg}`).catch(() => {});
 
   if (reaction.partial) {
-    try {
-      await reaction.fetch();
-    } catch (e) {
-      dbg(`Failed to fetch partial reaction: ${e}`);
-      return;
-    }
+    try { await reaction.fetch(); } catch (e) { dbg(`Failed to fetch partial reaction: ${e}`); return; }
   }
 
   const msgId = reaction.message.id;
@@ -1735,10 +1710,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
   dbg(`Reaction on msg ${msgId} | emoji name: ${reaction.emoji.name} | emoji id: ${reaction.emoji.id} | known messages: ${[...reactionRoles.keys()].join(', ') || 'none'}`);
 
-  if (!reactionRoles.has(msgId)) {
-    dbg(`No mapping found for message ${msgId}`);
-    return;
-  }
+  if (!reactionRoles.has(msgId)) { dbg(`No mapping found for message ${msgId}`); return; }
 
   const emojiKey = reaction.emoji.id
     ? `${reaction.emoji.name}:${reaction.emoji.id}`
@@ -1748,37 +1720,25 @@ client.on('messageReactionAdd', async (reaction, user) => {
   dbg(`Emoji key: "${emojiKey}" | mapping keys: ${Object.keys(mapping).join(', ')}`);
 
   const roleId = mapping[emojiKey] || mapping[reaction.emoji.name];
-  if (!roleId) {
-    dbg(`No role found for emoji key "${emojiKey}"`);
-    return;
-  }
+  if (!roleId) { dbg(`No role found for emoji key "${emojiKey}"`); return; }
 
   dbg(`Found role ID: ${roleId} — attempting to add to user ${user.id}`);
 
   try {
     const guild = reaction.message.guild;
     const member = await guild.members.fetch(user.id).catch(() => null);
-    if (!member) {
-      dbg(`Could not fetch member ${user.id}`);
-      return;
-    }
+    if (!member) { dbg(`Could not fetch member ${user.id}`); return; }
     await member.roles.add(roleId)
       .then(() => dbg(`Successfully added role ${roleId} to ${user.id}`))
       .catch(e => dbg(`Failed to add role: ${e}`));
-  } catch (e) {
-    dbg(`Reaction role add error: ${e}`);
-  }
+  } catch (e) { dbg(`Reaction role add error: ${e}`); }
 });
 
 client.on('messageReactionRemove', async (reaction, user) => {
   if (user.bot) return;
 
   if (reaction.partial) {
-    try {
-      await reaction.fetch();
-    } catch {
-      return;
-    }
+    try { await reaction.fetch(); } catch { return; }
   }
 
   const msgId = reaction.message.id;
@@ -1808,9 +1768,7 @@ client.on('messageReactionRemove', async (reaction, user) => {
     const guild = reaction.message.guild;
     const member = await guild.members.fetch(user.id).catch(() => null);
     if (member) await member.roles.remove(roleId).catch(e => console.error('Failed to remove reaction role:', e));
-  } catch (e) {
-    console.error('Reaction role remove error:', e);
-  }
+  } catch (e) { console.error('Reaction role remove error:', e); }
 });
 
 client.login(process.env.DISCORD_TOKEN);
