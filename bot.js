@@ -41,6 +41,32 @@ const DATA_CHANNEL_ID = '1497467308010901525';
 const XPOSTER_PATH = path.join(__dirname, '..', 'xposter');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// AUTO BYPASS CONFIG
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Domains that should be auto-bypassed when detected in any message
+const BYPASS_DOMAINS = [
+  'speedy-links.com',
+  'linkvertise.com',
+  'link-center.net',
+  'loot-link.com',
+  'lootlinks.co',
+  'lootlinks.com',
+  'sub2unlock.com',
+  'sub2get.com',
+  'social-unlock.com',
+  'rekonise.com',
+  'socialwolvez.com',
+  'boostink.com',
+  'boost.ink',
+  'flux.li',
+  'fluxus.pw',
+  'get-rblx.com',
+  'krnl.ca',
+  'pastebin.com/raw',
+];
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // X POST WATCHER CONFIG
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -564,6 +590,58 @@ async function checkRedditLink(message, url) {
   }
 }
 
+// ─── Auto Bypass ──────────────────────────────────────────────────────────────
+
+function extractBypassableLinks(content) {
+  const urlRegex = /https?:\/\/[^\s<>"\]]+/gi;
+  const found = content.match(urlRegex) || [];
+  return found.filter(url => {
+    try {
+      const hostname = new URL(url).hostname.replace(/^www\./, '');
+      return BYPASS_DOMAINS.some(domain => hostname === domain || hostname.endsWith('.' + domain));
+    } catch {
+      return false;
+    }
+  });
+}
+
+function bypassLink(url) {
+  return new Promise((resolve, reject) => {
+    const apiUrl = `https://bypass.vip/api?url=${encodeURIComponent(url)}`;
+    https.get(apiUrl, {
+      headers: { 'User-Agent': 'bot', 'Accept': 'application/json' }
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          if (json.status === 'success' && json.result) {
+            resolve(json.result);
+          } else {
+            reject(new Error(json.error || json.message || `API returned status: ${json.status}`));
+          }
+        } catch {
+          reject(new Error(`Invalid response from bypass API: ${data.slice(0, 100)}`));
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
+async function handleAutoBypass(message, links) {
+  for (const link of links) {
+    try {
+      const bypassed = await bypassLink(link);
+      await message.reply(`🔓 **bypassed**\n${bypassed}`);
+    } catch (e) {
+      await message.reply(`❌ failed to bypass \`${link}\`\nerror: ${e.message}`);
+    }
+  }
+}
+
+// ─── Anti Spam ────────────────────────────────────────────────────────────────
+
 const pingWarnTracker = new Map();
 
 async function handleAntiSpam(message) {
@@ -756,6 +834,13 @@ client.on('messageCreate', async (message) => {
   const anyLinkRegex = /https?:\/\//i;
   if (!isAdmin && message.channel.id === LINK_CHANNEL_ID && anyLinkRegex.test(message.content)) {
     deleteAfter(message, LINK_DELETE_MS);
+  }
+
+  // ── Auto Bypass Listener ──────────────────────────────────────────────────
+  const bypassableLinks = extractBypassableLinks(message.content);
+  if (bypassableLinks.length > 0) {
+    await handleAutoBypass(message, bypassableLinks);
+    return;
   }
 
   const xLinkRegex = /https?:\/\/(?:twitter\.com|x\.com)\/\w+\/status\/\d+[^\s]*/gi;
